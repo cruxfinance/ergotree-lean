@@ -11,7 +11,7 @@
 //! the dummies. We deliberately parse the raw `expressionTree` bytes with
 //! `Expr::sigma_parse` directly (not via `ErgoTree::sigma_parse_bytes` +
 //! `.proposition()`), since `.proposition()` performs exactly the
-//! placeholder-substitution the task brief says to avoid.
+//! placeholder-substitution this exporter must avoid.
 
 use std::io::Cursor;
 use std::io::Write as _;

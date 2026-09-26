@@ -52,20 +52,19 @@ own body is *itself* already fully rewritten (any further to-be-inlined
 `ValUse`s inside it resolved) by the time it's substituted at a later call
 site — no re-rewriting of a substituted-in subtree is ever needed.
 
-## The precondition — revised after checking against the real tree
+## Why there's no global-distinctness precondition
 
-The original plan for this pass (per the phase-2 brief) was to reject the
-tree outright (return `none`) unless every `ValDef` id was *globally*
-distinct, reasoning that the compiler's ids come from one incrementing
-counter. Checking that against a real exported downstream tree
-falsifies the premise: `collectValDefIds` on that tree finds ids
+This pass does not reject a tree (return `none`) just because a `ValDef`
+id repeats, even though the compiler's ids come from one incrementing
+counter: a real exported downstream tree can still have the same id bound
+more than once. `collectValDefIds` on one such tree finds ids
 `4,5,6` bound twice and id `13` bound *three* times — the compiler resets
 its id counter (or reuses a small pool) independently inside each branch
 of a multi-way mutually-exclusive `if` (e.g. a contract with several
 alternative spending actions), since those branches are mutually
 exclusive at runtime and their `ValDef`s are never
-simultaneously live. A global-distinctness precondition rejects this real,
-correct, compiler-produced tree — so it was wrong, and is not enforced.
+simultaneously live. A global-distinctness precondition would reject this
+real, correct, compiler-produced tree, so none is enforced.
 
 `inlineFuns` is unconditionally safe against this kind of reuse regardless,
 by construction, with no precondition needed: `m` is an ordinary immutable

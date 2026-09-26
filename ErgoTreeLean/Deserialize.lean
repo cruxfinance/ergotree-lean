@@ -201,9 +201,8 @@ end
 /-- Parse a full hex-encoded `expressionTree`: it must decode to exactly one
     `Expr` with no leftover bytes. `constTypes` is the EIP-5 template's
     `constTypes` array (in `constantIndex` order), needed to type
-    `ConstantPlaceholder` nodes — exactly the "build a constant store to
-    type placeholders" step the task brief calls for on the Rust exporter
-    side too. -/
+    `ConstantPlaceholder` nodes — the same "build a constant store to
+    type placeholders" step the Rust exporter takes on its side too. -/
 def parseExprHex (s : String) (constTypes : List SType) : Option Expr := do
   let bytes ← hexStringToBytes s
   let (e, rest) ← parseExpr bytes.length [] constTypes bytes

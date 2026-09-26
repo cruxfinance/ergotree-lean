@@ -15,7 +15,7 @@ import ErgoTreeLean.Syntax
 
 namespace ErgoTreeLean
 
-/-- Phase 4: an abstract oracle for the two operations `Eval.lean` must
+/-- An abstract oracle for the two operations `Eval.lean` must
     never compute directly — cryptographic hashing and script
     deserialization (see the module docstring on `Expr.calcBlake2b256`/
     `Expr.deserializeContext` in `Syntax.lean` and the README's "What is modelled"
@@ -39,11 +39,10 @@ structure Oracle where
   blake2b256 : List UInt8 → List UInt8
   deserialize : List UInt8 → Option Value
 
-/-- The oracle every pre-phase-4 `Context` literal implicitly gets (never
-    exercised by `sell-order`, which uses neither node) — this is what lets
-    `Context`'s new `oracle` field carry a default value so every existing
-    `{ selfBox := ..., ... }` construction across a contract's own file
-    keeps compiling unchanged. -/
+/-- The default oracle (never exercised by `sell-order`, which uses
+    neither node) — this is what lets `Context`'s `oracle` field carry a
+    default value so a `{ selfBox := ..., ... }` construction that omits
+    it still compiles. -/
 def Oracle.default : Oracle where
   blake2b256 := fun _ => []
   deserialize := fun _ => none
@@ -59,9 +58,9 @@ instance : Repr Oracle := ⟨fun _ _ => "Oracle.default"⟩
 
 /-- The evaluation context. `extension` is the prover-supplied
     `getVar[T](id)` map (`ContextExtension` in sigma-rust) for the input
-    currently being evaluated. `oracle` is phase 4's crypto/deserialize
+    currently being evaluated. `oracle` is the crypto/deserialize
     abstraction (see `Oracle` above); it defaults to `Oracle.default` so
-    no pre-phase-4 `Context` literal needs to change. -/
+    a `Context` literal that omits it still compiles. -/
 structure Context where
   selfBox : Box
   inputs : List Box

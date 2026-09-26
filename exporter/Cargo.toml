@@ -3,6 +3,8 @@ name = "exporter"
 version = "0.1.0"
 edition = "2021"
 publish = false
+license = "CC0-1.0"
+repository = "https://github.com/cruxfinance/ergotree-lean"
 
 [[bin]]
 name = "exporter"

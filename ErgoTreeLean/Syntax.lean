@@ -42,14 +42,14 @@ which would error on a `SigmaProp` operand). So a downstream contract's
 `sigmaAnd [boolToSigmaProp (...), createProveDlog (...)]` for
 `sigmaProp(...) && someProof` is exactly what the real compiler emits.
 
-## Phase 2: numeric semantics, `Box`/`Context`/`Value`
+## Numeric semantics, `Box`/`Context`/`Value`
 
-Phase 1 modelled `Long`/`Int`/etc as unbounded `Int` and had no
-registers/tokens on `Box`. Phase 2 tightens both — see `Numeric.lean` for
+`Long`/`Int`/etc are checked, fixed-width arithmetic, not unbounded `Int`,
+and `Box` carries registers/tokens — see `Numeric.lean` for
 the fixed-width-checked-arithmetic helpers `Eval.lean`'s `BinOp`/`Upcast`/
 `Downcast`/`Negation` cases use; `Value`'s numeric constructors still carry
 a plain Lean `Int` (there's no dependent `Fin`/`BitVec` doing double duty
-as both value and type tag), but `eval`'s own arithmetic can no longer
+as both value and type tag), but `eval`'s own arithmetic cannot
 *produce* an out-of-range numeric `Value` — every arithmetic case
 range-checks its result before returning it, exactly like sigma-rust's
 `checked_add`/`checked_sub`/... erroring on `None`.
@@ -65,8 +65,8 @@ variant" case that would make `#[derive(PartialEq)]` on `CollKind` see them
 as unequal. This development has only one representation to begin with
 (`vColl .sByte [.vByte _, ...]`), so that invariant holds trivially — no
 separate `vBytes` constructor is needed. `Box.propositionBytes`/`Box.id`/
-`Box.tokens`' token-id component stay raw `List UInt8` (matching the task's
-`Box` field types below), converted to `vColl .sByte [...]` only when
+`Box.tokens`' token-id component stay raw `List UInt8` (matching `Box`'s
+own field types below), converted to `vColl .sByte [...]` only when
 `Eval.lean` extracts them into the `Value` world (`ExtractScriptBytes`,
 `ExtractId`, `PropertyCall Box.tokens`); this conversion must sign-extend
 each byte as sigma-rust's `i8` does (`Coll[Byte]`'s elements are *signed* —
@@ -86,8 +86,8 @@ the scalar one, mirroring how `Eval.lean` itself already avoids routing
 recursion through `List.map`/`List.all`/`List.zip` (`evalDefs`/`evalList`
 are dedicated helpers, not `List.map eval`). This isn't just style: a
 `partial def` doesn't get the equation lemmas `simp`/`rfl` need to unfold
-it inside a proof (phase 3's theorems, and even phase 2's own
-`SellOrder.lean`, unfold `eval`/`Value.beq` via `simp`), and deriving
+it inside a proof (this repo's theorems, including
+`SellOrder.lean`'s, unfold `eval`/`Value.beq` via `simp`), and deriving
 `DecidableEq` automatically fails outright on `SType`/`Value` (both have a
 constructor holding `List <the type itself>`, which the derive handler
 doesn't support) — confirmed by trying it. Two derived-`PartialEq`
@@ -186,7 +186,7 @@ inductive SigmaBoolean where
   /-- `SigmaConjecture::Cthreshold` / ErgoScript's `atLeast(k, items)`: a
       k-of-n threshold — satisfied iff at least `k` of `items` are
       satisfied. Mirrors `ergotree-ir`'s `Cthreshold { k : u8, children }`
-      (phase 4, `Eval.lean`'s `cthresholdReduce` builds this only in the
+      (`Eval.lean`'s `cthresholdReduce` builds this only in the
       exact normalized shape `Cthreshold::reduce` would — see there). -/
   | cthreshold (k : Nat) (items : List SigmaBoolean)
 deriving Repr
@@ -335,10 +335,10 @@ inductive Expr where
   | height
   /-- `GlobalVars::SelfBox`: the box currently being spent. -/
   | selfBox
-  /-- `GlobalVars::Inputs`: the transaction's input boxes (phase 4;
-      `eval/global_vars.rs`'s `GlobalVars::Inputs` arm). -/
+  /-- `GlobalVars::Inputs`: the transaction's input boxes
+      (`eval/global_vars.rs`'s `GlobalVars::Inputs` arm). -/
   | inputs
-  /-- `Expr::Context` (bare `CONTEXT` global, type `SContext`; phase 4).
+  /-- `Expr::Context` (bare `CONTEXT` global, type `SContext`).
       Has no sensible standalone evaluation in this model — it only ever
       appears as the receiver of `PropertyCall(101.1 dataInputs)`, which
       `Eval.lean` matches on the *syntax* `.propertyCall .context 101 1`
@@ -438,11 +438,11 @@ inductive Expr where
   | byteArrayToBigInt (e : Expr)
   /-- `ByteArrayToLong`. -/
   | byteArrayToLong (e : Expr)
-  /-- `CalcBlake2b256` (phase 4): hash a `Coll[Byte]`. Evaluated via
+  /-- `CalcBlake2b256`: hash a `Coll[Byte]`. Evaluated via
       `ctx.oracle.blake2b256` (`Context.lean`'s `Oracle`) — proofs never
       compute a real blake2b hash; see `Eval.lean` and the README's "What is modelled". -/
   | calcBlake2b256 (e : Expr)
-  /-- `DeserializeContext` (phase 4): `getVar[Coll[Byte]](varId)`,
+  /-- `DeserializeContext`: `getVar[Coll[Byte]](varId)`,
       deserialize-then-evaluate in place, result type `tpe`. Evaluated via
       `ctx.oracle.deserialize` (`Context.lean`'s `Oracle`) — see
       `Eval.lean` and the README's "What is modelled" for why the oracle's return type is
@@ -459,12 +459,12 @@ inductive Expr where
       *verified*: this node's semantics are abstracted behind a trusted
       oracle either way, exactly like the crypto hash. -/
   | deserializeContext (varId : Nat) (tpe : SType)
-  /-- `Atleast` (ErgoScript's `atLeast(bound, items)`, phase 4): a k-of-n
+  /-- `Atleast` (ErgoScript's `atLeast(bound, items)`): a k-of-n
       sigma-threshold. `bound`/`input` are both `Expr` (the bound is a
       genuine `SInt`-typed sub-expression, not baked in as a `Nat`) —
       mirrors `ergotree_ir::mir::atleast::Atleast { bound, input }`. -/
   | atLeast (bound input : Expr)
-  /-- `Map` (phase 4): `coll.map(mapper)`. `elemTpe` is the *output*
+  /-- `Map`: `coll.map(mapper)`. `elemTpe` is the *output*
       collection's element type (`Map::out_elem_tpe`, i.e.
       `mapper_sfunc.t_range`) — mirrors `filterOf`'s `elemTpe` field
       exactly (also the output-collection type, not the input's). -/

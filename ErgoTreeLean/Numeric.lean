@@ -74,8 +74,7 @@ def sTypeToNumKind? : SType → Option NumKind
     extract the right operand via `rv.try_extract_into::<T>()` for the
     exact Rust type `T` determined by the left operand's variant — a
     `Byte` left operand and a `Long` right operand is a hard
-    `TryExtractFromError`, not a coercion (this is the "fix the old
-    permissive `GE`" the phase-2 brief calls for). -/
+    `TryExtractFromError`, not a coercion. -/
 def sameKindRaw (lv rv : Value) : Option (NumKind × Int × Int) :=
   match lv.numKind, rv.numKind with
   | some (k1, a), some (k2, b) => if k1 == k2 then some (k1, a, b) else none
@@ -224,8 +223,8 @@ def downcastValue (src : NumKind) (srcV : Int) (tgt : NumKind) : Option Int :=
 
 Mirrors `eval/byte_array_to_bigint.rs` / `eval/byte_array_to_long.rs`.
 Both treat the input `Coll[Byte]` as raw signed bytes (`i8`). Neither node
-occurs in `sell-order`'s compiled tree, but both are implemented here for
-completeness/fidelity to the phase-2 brief. -/
+occurs in `sell-order`'s compiled tree, but both are modelled here so the
+numeric semantics stay complete and faithful to sigma-rust. -/
 
 /-- A raw byte's value as sigma-rust's `i8` (two's-complement,
     `[-128,127]`), matching how `Coll[Byte]`'s elements are actually

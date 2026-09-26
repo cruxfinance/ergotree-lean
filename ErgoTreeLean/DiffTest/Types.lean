@@ -14,11 +14,11 @@ import ErgoTreeLean.Context
 namespace ErgoTreeLean.DiffTest
 
 /-- One differential-test case. `expected := none` means sigma-rust's
-    `reduce_to_crypto` itself errored (an evaluation error, in the task
-    brief's sense — the error *message* is deliberately not recorded/
-    compared, only the ok/error outcome and, when `ok`, the resulting
-    `SigmaBoolean`, after sigma-rust's own `Cand`/`Cor` normalization —
-    see `Eval.lean`'s `normalizeCand`/`normalizeCor`, which mirror it). -/
+    `reduce_to_crypto` itself errored — the error *message* is
+    deliberately not recorded/compared, only the ok/error outcome and,
+    when `ok`, the resulting `SigmaBoolean`, after sigma-rust's own
+    `Cand`/`Cor` normalization — see `Eval.lean`'s
+    `normalizeCand`/`normalizeCor`, which mirror it). -/
 structure Case where
   id : Nat
   consts : List Value

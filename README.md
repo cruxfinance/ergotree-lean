@@ -159,6 +159,128 @@ contract, to see which nodes (if any) still need an `Expr`/`eval` case.
 bytes + constant types instead of an EIP-5 JSON file (for a contract with
 no EIP-5 wrapper).
 
+## Verifying a new contract
+
+Reviewing a contract you didn't write means getting its tree into this
+model, checking the model actually covers it, then difftesting before
+trusting any proof.
+
+### 1. Get the compiled tree
+
+You need the contract's compiled `expressionTree` bytes: either an EIP-5
+template JSON (`{"constTypes": [...], "expressionTree": "..."}`, see
+`contracts/sell-order-eip5.json` — what a compiler typically emits), or
+raw hex + a `constTypes` list, if you only have a box's `ErgoTree` bytes
+from chain (e.g. a box's `script` field from a node's `/utxo` endpoints).
+For raw hex, pass the expression bytes and constant-type bytes with
+`--const-types` (see "Building" above).
+
+### 2. Check coverage before anything else
+
+Run `exporter --inventory <path-to-eip5.json>` (or `--hex ...
+--const-types ...`). It prints the sorted set of distinct MIR node kinds
+the tree contains, no Lean emitted. This repo's `Expr` (`Syntax.lean`)
+only has constructors for the node kinds the contracts covered here
+actually use; anything else is deliberately absent, not approximated —
+the real export step (`exporter <path> --lean-name ... --namespace ...
+-o ...`) fails loudly, naming the unhandled node, rather than silently
+emitting something wrong.
+
+**Coverage is limited to what this repo's contracts exercise.** If
+`--inventory` turns up a node not already handled in
+`Syntax.lean`/`Eval.lean`, extending coverage is a contribution, not a
+config change: a new `Expr` constructor in `Syntax.lean` (matching the
+MIR node's shape 1:1), a new `eval` case in `Eval.lean` mirroring the
+corresponding `ergotree-interpreter 0.28.0` source file (tag it `--
+mirrors: eval/<file>.rs`; see `CONTRIBUTING.md`), exporter support (a
+case in `exporter/src/emit.rs`, plus `exporter/src/inventory.rs` if you
+want `--inventory` to name it), an `eval_inv`/`EvalHolds` rule in
+`ErgoTreeLean/Lemmas/` if a proof needs to see through it, and difftest
+cases exercising it (step 4) — new coverage with no differential-test
+evidence isn't trustworthy no matter how right `eval` looks by eye.
+
+### 3. Export the tree to Lean
+
+- **Reviewing your own contract, in your own package**: `require` this
+  repo as a Lean dependency (see "Difftest library usage" below) and
+  export into your own package, e.g.:
+  ```
+  exporter <path-to-eip5.json> --lean-name myContractTree \
+    --namespace MyPackage.Contracts.MyContract \
+    -o MyPackage/Contracts/MyContract/Exported.lean
+  ```
+- **Contributing the contract to this repo**: export under
+  `ErgoTreeLean/Contracts/`, following the `sell-order` layout
+  (`Contracts/SellOrder.lean` for the hand/theorem-carrying tree,
+  `Contracts/SellOrder/Exported.lean` + `CrossCheck.lean` for the
+  exporter's independent copy and the `rfl` proof the two agree).
+
+The generated file's own header records the exact command and source hex
+to regenerate it — never hand-edit a generated file.
+
+### 4. Write difftest coverage before trusting anything
+
+The model is only trustworthy on the node kinds and value shapes the
+differential test exercises. Before writing a single theorem:
+
+- Add a Rust generator module under `difftest/src/`, following
+  `sell_order.rs`: `pub fn generate(rng: &mut StdRng, count: usize) ->
+  Result<Vec<difftest::GenCase>>`, building varied `(consts, Context)`
+  cases with `build_ergo_tree`/`build_context`/
+  `build_context_with_data_inputs` and the `*_const`/`coll_*_const`/
+  `dummy_*` helpers, run through sigma-rust's real reducer with
+  `run_reducer`. Register it in your `bin/difftest.rs`'s `run_cli` family
+  table.
+- Vary everything the tree branches on: values at and around any
+  threshold, present vs. absent optional data, wrong-script/wrong-party
+  outputs, missing outputs/inputs, and, if the tree uses
+  `CalcBlake2b256`/`DeserializeContext`, real oracle-table entries
+  (`GenCase.blake2b_table`/`deser_table`).
+- On the Lean side, reuse `ErgoTreeLean.DiffTest` directly (inside this
+  repo) or `require` it and write a thin runner mirroring
+  `ErgoTreeLean/DiffTest/Main.lean`: `loadCases` your case JSON, call
+  `runCases "<family>" <tree> <cases>`, check the mismatch count is `0`.
+- Run it: `make difftest-gen && lake exe difftest` (or your package's
+  equivalent). Anything but "0 mismatches" means the model disagrees
+  with sigma-rust on a case you generated — do not proceed to proving
+  properties about that tree until it's 0.
+
+### 5. State and prove a property
+
+State the property as a plain Lean proposition over
+`spendable`/`holds`/`eval`, not as prose.
+`ErgoTreeLean/Contracts/SellOrder/EvalSym.lean` is the minimal worked
+example: it re-proves two `SellOrder.lean` theorems with `eval_sym`
+(`ErgoTreeLean/Tactics/EvalSym.lean`), which symbolically executes the
+`eval`/`EvalHolds` hypotheses about your concrete tree instead of you
+hand-deriving evaluation lemmas. Follow its shape for a first proof:
+unfold your tree and constants, call `eval_sym`, and use
+`EvalHolds_sigmaOr_imp` (or the matching `EvalHolds_*` rule for your
+top-level connective) to split on which branch of the guard holds. Once
+a proof completes, run `#print axioms <theorem>` and confirm it lists
+only `propext`, `Classical.choice`, `Quot.sound` (see `CONTRIBUTING.md`).
+
+### 6. Multi-input properties
+
+A property spanning several inputs of one transaction (e.g. "input 0's
+guard relies on input 1 having already been validated") needs `Tx.lean`:
+build a `Tx`, use `Tx.ctxAt tx i` for input `i`'s context, and state the
+transaction-level hypothesis as `Tx.Valid tx script signers`. Name
+`Tx.Valid`'s two hypotheses explicitly rather than assuming them: `script`
+(the function from a box's `propositionBytes` to its parsed `(consts,
+tree)` — this model does not parse arbitrary bytes, see
+`Deserialize.lean`'s scope) and, transitively through `spendable`, any
+`executeFromVar`/`Oracle` fact the tree needs.
+
+### 7. What you actually have at the end
+
+A theorem proved this way is exactly as strong as "Trust caveats — read
+this first" above says, no stronger: evidence against `sigma-rust`, not
+the Scala node; backed by empirical difftest coverage, not a proof `eval`
+matches `sigma-rust` on every input; and a "spendable ⇒ property"
+(safety) result carries over to mainnet more reliably than a "property ⇒
+spendable" (liveness) one. Say explicitly which kind you proved.
+
 ## Differential testing
 
 `difftest/` is a Cargo **library** crate: it owns the generic
@@ -340,4 +462,6 @@ difftest/                 Rust: difftest library + this repo's sell-order bin
 contracts/                sell-order.es + its EIP-5 compiled JSON
 ```
 
-License: TBD.
+## License
+
+CC0-1.0. See [LICENSE](LICENSE).

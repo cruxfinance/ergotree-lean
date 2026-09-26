@@ -35,11 +35,11 @@ by kernel proof.
 - `Context` (embedded in `Case.ctx`): `{"selfBox": Box, "inputs": [Box],
   "outputs": [Box], "dataInputs": [Box], "height": Nat, "extension":
   [[Nat, Value]], "blake2b": [[hex, hex]]?, "deserialize": [[hex,
-  Value]]?}` — the last two (phase 4) are per-case oracle tables, optional
+  Value]]?}` — the last two are per-case oracle tables, optional
   (absent = empty = `Oracle.default`); see `decodeContext`.
 - `SigmaBoolean`: `{"tag": "trivial", "v": Bool}`, `{"tag": "proveDlog",
   "hex": String}`, `{"tag": "cor"/"cand", "items": [SigmaBoolean]}`,
-  `{"tag": "cthreshold", "k": Nat, "items": [SigmaBoolean]}` (phase 4).
+  `{"tag": "cthreshold", "k": Nat, "items": [SigmaBoolean]}`.
 - `Case`: `{"id": Nat, "consts": [Value], "ctx": Context, "expected": null
   | SigmaBoolean}`. The top-level file is a JSON array of `Case`.
 -/
@@ -157,12 +157,11 @@ partial def decodeValue (j : Json) : Except String Value := do
   | "vBox" => do
       let b ← decodeBox (← j.getObjVal? "box")
       pure (.vBox b)
-  -- Phase 4: the "deserialize" oracle table's answer is an already
+  -- The "deserialize" oracle table's answer is an already
   -- evaluated `Value` — for a downstream contract's
   -- `executeFromVar[SigmaProp]`, that's always a `vSigmaProp`, which
-  -- `literal_to_json`'s original callers (register/constant literals)
-  -- never needed to produce. See `difftest/src/leanval.rs`'s matching
-  -- `Literal::SigmaProp` case.
+  -- register/constant literals never produce. See `difftest/src/leanval.rs`'s
+  -- matching `Literal::SigmaProp` case.
   | "vSigmaProp" => do
       let sb ← decodeSigmaBoolean (← j.getObjVal? "sb")
       pure (.vSigmaProp sb)
@@ -186,10 +185,9 @@ partial def decodeBox (j : Json) : Except String Box := do
     pure (idx, v))
   pure (Box.mk id value propBytes tokens regs)
 
--- In the same `mutual` block as `decodeValue`/`decodeBox` (rather than
--- after them, as in an earlier version of this file) because `decodeValue`'s
--- `"vSigmaProp"` case (phase 4, the `deserialize` oracle table's answers —
--- see that case's comment) now calls it.
+-- In the same `mutual` block as `decodeValue`/`decodeBox` (not after
+-- them) because `decodeValue`'s `"vSigmaProp"` case (the `deserialize`
+-- oracle table's answers — see that case's comment) calls it.
 partial def decodeSigmaBoolean (j : Json) : Except String SigmaBoolean := do
   let tag ← getTag j
   match tag with
@@ -230,8 +228,8 @@ partial def decodeContext (j : Json) : Except String Context := do
     let idx ← (← arrGet arr 0).getNat?
     let v ← decodeValue (← arrGet arr 1)
     pure (idx, v))
-  -- Phase 4: per-case oracle tables (`"blake2b"`/`"deserialize"`, both
-  -- optional — absent, as in every pre-phase-4 case file, means "empty
+  -- Per-case oracle tables (`"blake2b"`/`"deserialize"`, both
+  -- optional — absent means "empty
   -- table", i.e. `Oracle.default`). `difftest/src/cl_common.rs` emits
   -- these as `[[hexInput, hexHash], ...]` / `[[hexInput, Value], ...]`
   -- respectively — the *real* blake2b256 hash of the bytes this case

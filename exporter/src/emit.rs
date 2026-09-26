@@ -37,7 +37,7 @@ fn fmt_int(v: i64) -> String {
 }
 
 /// Same convention as `fmt_int`, for an arbitrary-precision `BigInt256`
-/// (phase 4: some downstream contracts have inline `BigInt` constant
+/// (some contracts have inline `BigInt` constant
 /// literals, e.g. `10000L.toBigInt` — folded by the Scala compiler into a
 /// literal `Const(BigInt256(10000))` rather than an `Upcast` at those call
 /// sites). `to_str_radix(10)` is a plain decimal string with a leading

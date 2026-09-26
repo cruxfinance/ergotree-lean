@@ -14,8 +14,8 @@
 //! `ErgoTreeLean`'s own `Value`/`Box`/`Context`/`Case`/`SigmaBoolean`
 //! constructors at `lake exe difftest` run time — see `leanval`'s module
 //! docstring for why JSON-plus-a-runtime-decoder, not a generated `.lean`
-//! literal (the first version of this crate did that; it doesn't scale
-//! past a couple hundred cases).
+//! literal (a generated Lean literal doesn't scale past a couple hundred
+//! cases).
 //!
 //! This crate is a **library**: the case-building helpers below
 //! (`GenCase`, `build_ergo_tree`, `build_context*`, `dummy_*`, the
@@ -252,7 +252,7 @@ pub fn rand_ec_point(rng: &mut StdRng) -> EcPoint {
 
 /// Run sigma-rust's real evaluator on a fully-built `(ErgoTree, Context)`
 /// pair. `None` means the `.proposition()` substitution or `reduce_to_crypto`
-/// itself errored (an evaluation error, in the task brief's sense).
+/// itself errored (an evaluation error).
 pub fn run_reducer(tree: &ErgoTree, ctx: &EvalContext) -> Option<SigmaBoolean> {
     let expr = tree.proposition().ok()?;
     match reduce_to_crypto(&expr, ctx) {

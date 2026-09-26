@@ -32,11 +32,11 @@ def sellOrderHex : String :=
 def sellOrderConstTypes : List SType :=
   [.sGroupElement, .sColl .sByte, .sLong]
 
-/-- `sellOrder`'s body, hand-transcribed from the opcode breakdown in the
-    task brief. Constructor spelling follows the MIR-mirroring `Expr`
-    redesign in `Syntax.lean` (`.constInt`/`.eq`/`.ge`/`.binAnd` ↦
+/-- `sellOrder`'s body, hand-transcribed from the opcode breakdown of the
+    compiled tree. Constructor spelling follows the MIR-mirroring `Expr`
+    shape in `Syntax.lean` (`.constInt`/`.eq`/`.ge`/`.binAnd` ↦
     `.const (.vInt _)`/`.binOp (.relation .eq)`/`.binOp (.relation .ge)`/
-    `.binOp (.logical .and)`); the tree itself is unchanged from phase 1. -/
+    `.binOp (.logical .and)`). -/
 def sellOrderTree : Expr :=
   .blockValue [(1, .byIndex .outputs (.const (.vInt 0)) none)]
     (.sigmaOr
@@ -77,8 +77,8 @@ def consts (pk : List UInt8) (prop : List UInt8) (price : Int) : List Value :=
 `bytesToVColl` (see `consts` above), so the tree's `Coll[Byte]` equality
 check reduces through `Value.beq`'s `vColl` case (comparing `elemTpe` and
 an element-wise `List.map (vByte ∘ signedByteVal)` equality), not a direct
-`List UInt8` comparison the way phase 1's dedicated `vBytes` did. These
-two lemmas bridge back to plain `List UInt8` equality: `signedByteVal` is
+`List UInt8` comparison. These two lemmas bridge back to plain `List
+UInt8` equality: `signedByteVal` is
 injective (`Coll[Byte]`'s signed-byte encoding is a bijection on `UInt8`),
 so `bytesToVColl` is too. -/
 
@@ -115,13 +115,13 @@ Two lemmas pinning down `eval` on `sellOrderTree`, one per shape of
 never reads `SELF`/`HEIGHT`/`CONTEXT`, so every other `Context` field is
 left universally quantified). Everything below is proved from these two.
 
-`eval_outputs_cons`'s conclusion is an `if`-`then`-`else`, not the raw
-`cor [proveDlog pk, trivial b]` phase 1 had: `SigmaOr`'s evaluator now
-normalizes (`Cand.normalized`/`Cor.normalized`, mirroring sigma-rust
+`eval_outputs_cons`'s conclusion is an `if`-`then`-`else`, not a raw
+`cor [proveDlog pk, trivial b]`: `SigmaOr`'s evaluator normalizes
+(`Cand.normalized`/`Cor.normalized`, mirroring sigma-rust
 exactly — see `Eval.lean`'s `normalizeCor`), and a 2-item `cor` where the
 second item is `trivial true` collapses to `trivial true` outright, while
 `trivial false` gets dropped, leaving the bare `proveDlog pk` (not wrapped
-in a `cor` at all). This is expected per the phase-2 brief, not a bug. -/
+in a `cor` at all). This is expected, not a bug. -/
 
 /-- With no outputs, `OUTPUTS(0)` is out of bounds and (since it is bound
     eagerly by the enclosing `BlockValue`, before either disjunct of the

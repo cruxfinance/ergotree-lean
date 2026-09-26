@@ -5,27 +5,24 @@
 //!
 //! ## Why JSON + a runtime decoder, not a generated `.lean` literal
 //!
-//! The first version of this crate emitted each case directly as Lean
-//! source (`Case.mk 0 [...] (Context.mk ...) ...`), one big `def cases :
-//! List Case := [...]` per contract. That's the more direct reading of
-//! the task brief ("emit the cases as a generated Lean module ... using
-//! the Lean Context/Box/Value constructors"), but it doesn't scale:
-//! elaborating a few hundred cases (even after switching every byte
-//! string from a `[n1, n2, ...]` numeral list to a hex string + a
-//! `hexStringToBytes` call, and from `{ field := .. }` records to
-//! positional `Box.mk`/`Context.mk`/`Case.mk`, both tried first) still
-//! took minutes and had to be killed — confirmed empirically, twice, not
-//! assumed. The cost is in elaborating one enormous literal `List Case`
-//! term itself (thousands of nested applications), not in any one part of
-//! it, so no amount of shrinking individual leaves fixes it.
+//! Emitting each case directly as Lean source (`Case.mk 0 [...]
+//! (Context.mk ...) ...`), one big `def cases : List Case := [...]` per
+//! contract, doesn't scale: elaborating a few hundred cases (even after
+//! switching every byte string from a `[n1, n2, ...]` numeral list to a
+//! hex string + a `hexStringToBytes` call, and from `{ field := .. }`
+//! records to positional `Box.mk`/`Context.mk`/`Case.mk`, both tried
+//! first) still took minutes and had to be killed — confirmed
+//! empirically, twice, not assumed. The cost is in elaborating one
+//! enormous literal `List Case` term itself (thousands of nested
+//! applications), not in any one part of it, so no amount of shrinking
+//! individual leaves fixes it.
 //!
 //! `ErgoTreeLean`'s own `Value`/`Box`/`Context`/`Case`/`SigmaBoolean`
 //! constructors are still exactly what builds every case — `Decode.lean`
-//! calls them the same way this file's Lean-emitting predecessor did,
-//! just from ordinary (fast, compiled) Lean code walking a parsed
-//! `Lean.Json` tree at `lake exe difftest` startup, instead of from
-//! elaborated source text. See `Decode.lean`'s module docstring for the
-//! JSON schema this file produces.
+//! calls them, just from ordinary (fast, compiled) Lean code walking a
+//! parsed `Lean.Json` tree at `lake exe difftest` startup, instead of
+//! from elaborated source text. See `Decode.lean`'s module docstring for
+//! the JSON schema this file produces.
 
 use anyhow::{bail, Context as _, Result};
 use ergotree_ir::chain::ergo_box::NonMandatoryRegisterId;
@@ -110,14 +107,14 @@ pub fn literal_to_json(lit: &Literal) -> Result<Json> {
             json!({"tag": "vTuple", "items": items_j})
         }
         Literal::CBox(b) => json!({"tag": "vBox", "box": box_to_json(b)?}),
-        // Phase 4: the oracle answer for `deserialize` is an already
+        // The oracle answer for `deserialize` is an already
         // evaluated `Value` — for a downstream contract's
         // `executeFromVar[SigmaProp](1)`, that's always a `SigmaProp`, not
         // a register/constant-storable literal (sigma-rust's own
         // `Constant` conversion supports it too, `impl From<SigmaProp> for
         // Constant` — this is a real runtime `Value`, just one
-        // `literal_to_json`'s original register/constant callers never
-        // produced). See `Decode.lean`'s matching `"vSigmaProp"` case.
+        // register/constant literals never produce). See `Decode.lean`'s
+        // matching `"vSigmaProp"` case.
         Literal::SigmaProp(sp) => json!({"tag": "vSigmaProp", "sb": sigma_boolean_to_json(sp.value())?}),
         other => bail!("literal_to_json: unsupported register/constant literal {other:?}"),
     })

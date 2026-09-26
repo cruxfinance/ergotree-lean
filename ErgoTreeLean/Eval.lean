@@ -80,7 +80,7 @@ def normalizeCor (items : List SigmaBoolean) : SigmaBoolean :=
     | [x] => x
     | xs => .cor xs
 
-/-! ### `Atleast` / `Cthreshold` normalization (phase 4)
+/-! ### `Atleast` / `Cthreshold` normalization
 
 -- mirrors: ergotree-ir-0.28.0/src/sigma_protocol/sigma_boolean/cthreshold.rs
    (`Cthreshold::reduce`)
@@ -204,9 +204,9 @@ def eval (consts : List Value) (ctx : Context) (env : Env) : Expr → Except Eva
   | .height => pure (.vInt (ctx.height : Int))
   -- mirrors: eval/global_vars.rs (GlobalVars::SelfBox)
   | .selfBox => pure (.vBox ctx.selfBox)
-  -- mirrors: eval/global_vars.rs (GlobalVars::Inputs; phase 4)
+  -- mirrors: eval/global_vars.rs (GlobalVars::Inputs)
   | .inputs => pure (.vColl .sBox (ctx.inputs.map .vBox))
-  -- mirrors: eval/expr.rs's `Expr::Context` (phase 4) — a bare `CONTEXT`
+  -- mirrors: eval/expr.rs's `Expr::Context` — a bare `CONTEXT`
   -- has no standalone evaluation in this model (sigma-rust's own
   -- `Value::Context` is likewise just a dataless marker property-call
   -- eval-fns check against, never produced from evaluating anything);
@@ -238,7 +238,7 @@ def eval (consts : List Value) (ctx : Context) (env : Env) : Expr → Except Eva
           | _ => .error (.error "byIndex: index is not an Int")
       | _ => .error (.error "byIndex: not a collection")
   -- mirrors: eval/atleast.rs + sigma_protocol/sigma_boolean/cthreshold.rs
-  -- (phase 4; `Atleast` — ErgoScript's `atLeast(bound, items)`). Order
+  -- (`Atleast` — ErgoScript's `atLeast(bound, items)`). Order
   -- matches the real `eval`: bound must fit a `u8` (`0..=255`) *before*
   -- the `bound > input size` check is even reached (a negative bound is
   -- therefore always an error, not "vacuously true" — that would be
@@ -262,8 +262,8 @@ def eval (consts : List Value) (ctx : Context) (env : Env) : Expr → Except Eva
           else
             pure (.vSigmaProp (cthresholdReduce bound.toNat sbs))
       | _, _ => .error (.error "atLeast: bad operand types (expected Int bound, Coll[SigmaProp] input)")
-  -- mirrors: eval/calc_blake2b256.rs, via `ctx.oracle.blake2b256` (phase 4
-  -- — see `Context.lean`'s `Oracle`; never computes a real hash here).
+  -- mirrors: eval/calc_blake2b256.rs, via `ctx.oracle.blake2b256`
+  -- — see `Context.lean`'s `Oracle`; never computes a real hash here.
   | .calcBlake2b256 e => do
       let v ← eval consts ctx env e
       match v with
@@ -272,7 +272,7 @@ def eval (consts : List Value) (ctx : Context) (env : Env) : Expr → Except Eva
           pure (bytesToVColl (ctx.oracle.blake2b256 bs))
       | _ => .error (.error "calcBlake2b256: not a Coll[Byte]")
   -- mirrors: eval/deserialize_context.rs, via `ctx.oracle.deserialize`
-  -- (phase 4) — see `Syntax.lean`'s `deserializeContext` docstring for
+  -- — see `Syntax.lean`'s `deserializeContext` docstring for
   -- why the oracle returns the already-*evaluated* `Value`, not an
   -- `Expr` to recurse into.
   | .deserializeContext varId tpe => do
@@ -344,7 +344,7 @@ def eval (consts : List Value) (ctx : Context) (env : Env) : Expr → Except Eva
   -- mirrors: eval/bin_op.rs (`RelationOp`: Eq/NEq are total `Value.beq`;
   -- Ge/Gt/Le/Lt dispatch on the left operand's numeric kind and require
   -- the right operand to be the exact same kind — a type mismatch is a
-  -- hard error, not a coercion, fixing phase 1's permissive `GE`)
+  -- hard error, not a coercion)
   | .binOp (.relation op) l r => do
       let lv ← eval consts ctx env l
       let rv ← eval consts ctx env r
@@ -531,7 +531,7 @@ def eval (consts : List Value) (ctx : Context) (env : Env) : Expr → Except Eva
       | _ => .error (.error "filterOf: not a collection")
   | .filterOf _ _ _ =>
       .error (.error "filterOf: condition is not a single-argument literal funcValue")
-  -- mirrors: eval/coll_map.rs (left-to-right; see `mapHelper`; phase 4)
+  -- mirrors: eval/coll_map.rs (left-to-right; see `mapHelper`)
   | .mapOf input (.funcValue [(argId, _)] body) elemTpe => do
       let v ← eval consts ctx env input
       match v with
@@ -598,7 +598,7 @@ def eval (consts : List Value) (ctx : Context) (env : Env) : Expr → Except Eva
       | none => .error (.error "apply: argument count mismatch")
   | .apply _ _ =>
       .error (.error "apply: function operand is not a literal funcValue (inlineFuns should have produced one)")
-  -- mirrors: eval/scontext.rs's `DATA_INPUTS_EVAL_FN` (phase 4). Matched
+  -- mirrors: eval/scontext.rs's `DATA_INPUTS_EVAL_FN`. Matched
   -- syntactically on the receiver being the literal `.context` node
   -- (never evaluating it to a `Value` first — see `.context`'s own case/
   -- docstring above: there is no `Value` constructor for `CONTEXT` in
@@ -606,7 +606,7 @@ def eval (consts : List Value) (ctx : Context) (env : Env) : Expr → Except Eva
   | .propertyCall .context 101 1 => pure (.vColl .sBox (ctx.dataInputs.map .vBox))
   -- mirrors: eval/property_call.rs's generic `SCollection.indices`
   -- (`type_id=12`, `method_id=14`) — the `0 ..< size` index list of any
-  -- collection (phase 4; used by some downstream contracts).
+  -- collection (used by some downstream contracts).
   | .propertyCall obj 12 14 => do
       let v ← eval consts ctx env obj
       match v with
@@ -767,7 +767,7 @@ def forallHelper (consts : List Value) (ctx : Context) (env : Env) (argId : Nat)
 termination_by l => (sizeOf body, 1 + l.length)
 
 /-- `Map`'s per-element loop: applies `body` to every element, in order,
-    building the result list (`eval/coll_map.rs`; phase 4). See
+    building the result list (`eval/coll_map.rs`). See
     `filterHelper`'s docstring for the termination measure. -/
 def mapHelper (consts : List Value) (ctx : Context) (env : Env) (argId : Nat) (body : Expr) :
     List Value → Except EvalError (List Value)

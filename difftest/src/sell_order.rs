@@ -1,5 +1,5 @@
 //! `sell-order` case generator — a smoke test for the harness itself
-//! (`sell-order` is the phase-1 contract with hand-proved theorems; this
+//! (`sell-order` is the example contract with hand-proved theorems; this
 //! isn't testing anything new about it, just confirming the difftest
 //! plumbing agrees with sigma-rust on a simple, already-trusted contract).
 
