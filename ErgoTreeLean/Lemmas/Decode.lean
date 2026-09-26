@@ -6,10 +6,10 @@ behind into plain equations and `Int` facts.
   `vColl` element-type comparison becomes an equation between types, and
   `typeOf v = .sInt` (etc.) pins the shape of `v`.
 * `Value.beq` is lawful on values with no `vOption` inside
-  (`Value.beq_iff_eq_of_optFree`). It is not lawful in general: `vOption`'s
+  (`Value.beq_iff_eq_of_optFree`, `Value.beq_eq_true_iff_of_optFree`). It is not lawful in general: `vOption`'s
   `beq` ignores the element type, as sigma-rust's runtime `Opt` has none. For
   a comparison against a value whose shape is only partly known,
-  `Value.beq_vColl_right_iff` and friends peel one constructor at a time, and
+  `Value.beq_vColl_right` and friends peel one constructor at a time, and
   `Value.beqList_getElem?_of_optFree` transfers a known element across a
   `beqList`.
 * `arithRes` (the arithmetic result `eval_arith_ok` leaves) becomes the plain
@@ -20,6 +20,8 @@ behind into plain equations and `Int` facts.
 -/
 import ErgoTreeLean.Lemmas.EvalInv
 import ErgoTreeLean.Lemmas.Beq
+
+set_option linter.unnecessarySeqFocus false
 
 namespace ErgoTreeLean
 
@@ -101,11 +103,6 @@ def Box.optFreeRegs : List (Nat × Value) → Bool
   | [] => true
   | (_, v) :: rs => Value.optFree v && Box.optFreeRegs rs
 end
-
-private theorem box_eq_of_fields {a b : Box} (h1 : a.id = b.id) (h2 : a.value = b.value)
-    (h3 : a.propositionBytes = b.propositionBytes) (h4 : a.tokens = b.tokens) (h5 : a.registers = b.registers) :
-    a = b := by
-  cases a; cases b; simp_all
 
 private theorem beqTokens_eq : ∀ (t1 t2 : List (List UInt8 × Int)), Box.beqTokens t1 t2 = true → t1 = t2
   | [], [], _ => rfl
@@ -354,8 +351,7 @@ theorem Value.beqList_getElem?_of_optFree {as bs : List Value} (h : Value.beqLis
 
 @[eval_inv] theorem bytesToVColl_inj (a b : List UInt8) : bytesToVColl a = bytesToVColl b ↔ a = b := by
   constructor
-  · intro h; have := Value.beq_refl (bytesToVColl a); rw [h] at this
-    exact (bytesToVColl_beq_true a b).mp (by rw [h]; exact Value.beq_refl _)
+  · intro h; exact (bytesToVColl_beq_true a b).mp (by rw [h]; exact Value.beq_refl _)
   · rintro rfl; rfl
 
 /-! ## Arithmetic: `arithRes` to plain `Int` facts with overflow bounds -/
@@ -410,8 +406,7 @@ theorem tdiv_eq_tdiv (a b : Int) : tdiv a b = a.tdiv b := by
   by_cases h0 : b = 0 <;> simp [h0]
   by_cases h1 : a = k.lo ∧ b = -1
   · simp [h1.1, h1.2]
-  · have : ¬ ((a == k.bounds.1 && b == -1) = true) := by simpa using h1
-    simp [this, h1, eq_comm]
+  · simp [eq_comm]
 
 /-- Upcasting to `BigInt` never fails and keeps the payload. -/
 @[eval_inv high] theorem upcastValue_bigint_eq_some_iff (k : NumKind) (p z : Int) :

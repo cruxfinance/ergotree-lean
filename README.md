@@ -110,7 +110,8 @@ Ergo mainnet":
   as a cross-check against the Rust exporter below.
 - **`sell-order`** (`ErgoTreeLean/Contracts/SellOrder.lean`): a
   hand-transcribed tree, a proof it matches the real compiler's bytes,
-  and five theorems (who can spend it, when it's unspendable, and why).
+  and five theorems (who can spend it, when it's unspendable, and why);
+  `SellOrder/EvalSym.lean` re-proves two of them with `eval_sym`.
   `Exported.lean`/`CrossCheck.lean`: the same contract independently
   exported by the Rust exporter agrees with the hand-transcribed tree,
   by `rfl`.
@@ -221,34 +222,74 @@ difftest library stay Mathlib-free).
   kind, turning a success equation `eval consts ctx env e = .ok w` into a
   statement about `e`'s children with every runtime pattern match already
   resolved (the intermediate values appear as existentials with their
-  constructor shape pinned). `sigmaOr`/`atLeast` only have *forward*
-  rules, not `↔`, because only soundness of the `Cor`/`Cthreshold` normal
-  forms is proved here — there's no rule that runs the other direction to
-  push a goal *into* an `Exists`/`Fold`/`Map` loop shape, so those still
-  need to be unfolded and reasoned about by hand once reached.
+  constructor shape pinned). The rest of a block after a `ValDef` and the
+  branches of an `if` are wrapped in `Later` (a marker equal to its
+  argument) so `eval_sym` can decode them in order, below.
 - `Lemmas/EvalHolds.lean`: the same idea one layer up, for `EvalHolds`
-  (the sigma-proposition/`holds` layer). `Lemmas/SigmaHolds.lean`/
-  `Lemmas/Beq.lean`: generic facts about `holds` against `eval`'s normal
-  forms, and about `Value.beq`'s `Coll[Byte]` encoding, any contract
-  proof can reuse.
-- `Tactics/EvalSym.lean`: `eval_sym`, which repeatedly (1) rewrites
-  hypotheses with the `eval_inv`/`EvalHolds` rules, (2) splits `∧`/`∃`
-  into separate hypotheses, and (3) substitutes every equation that
-  defines a variable — symbolically executing a concrete contract tree
-  inside a proof. What remains after it stops making progress is facts
-  about the context, plus `∀`-statements for collection loops and
-  unexpanded disjunctions for `||`/`if`, which the proof then handles in
-  ordinary Lean. `eval_sym'` is a single-pass-simp variant for larger
-  trees; `eval_simp`/`eval_simp_hyps` run one round of the rewrite alone.
+  (the sigma-proposition/`holds` layer). `sigmaOr`/`atLeast` only have
+  forward rules (`EvalHolds_sigmaOr_imp`, `EvalHolds_atLeast_proveDlogs`),
+  because only soundness of the `Cor`/`Cthreshold` normal forms is proved.
+  `Lemmas/SigmaHolds.lean`/`Lemmas/Beq.lean`: generic facts about `holds`
+  against `eval`'s normal forms, and about `Value.beq`'s `Coll[Byte]`
+  encoding.
+- `Lemmas/Decode.lean`: rules that turn what the inversion leaves into
+  plain facts. `SType.beq` is lawful (`LawfulBEq SType`); `typeOf v = .sInt`
+  and friends pin a value's constructor; `Value.beq` is equality when one
+  side has no `vOption` inside (`Value.beq_eq_true_iff_of_optFree`; not in
+  general, because `vOption`'s `beq` ignores the element type as sigma-rust's
+  runtime `Opt` has none), a comparison against a partly known value peels
+  one constructor at a time (`Value.beq_vColl_right`, …), and
+  `Value.beqList_getElem?_of_optFree` transfers a known element across a
+  `beqList`; arithmetic results (`arithRes`) become the plain `Int` result
+  plus its overflow side-condition as two `Int` bounds; an upcast to
+  `BigInt` keeps the payload.
+- `Lemmas/Loops.lean`: forward rules for loop facts (`exists`/`forall`
+  results, `map` pointwise, `filter` sublist) and invariant rules for `fold`
+  (`foldHelper_inv`, and `foldHelper_foldl` to turn a script-level sum into
+  `List.foldl`), the building blocks for transaction-level statements.
+  `forall` has the exact `forallHelper_true_iff` in `EvalInv.lean`.
+- `Tactics/EvalSym.lean`: `eval_sym`, symbolic execution of the `eval`/
+  `EvalHolds` hypotheses about a concrete tree. It is a loop, run until
+  nothing changes:
+  1. `simp` with the `eval_inv` rules, only on hypotheses whose statement
+     is not yet in normal form (a statement already simplified, or a part
+     of one, is never simplified again), split `∧`/`∃` hypotheses, and
+     merge two reads `e = some a`, `e = some b` into `a = b`, all in one
+     new goal per round;
+  2. turn every variable definition `x = t` into a rewrite rule for `x`
+     (instead of `subst`); of two variables the one the engine introduced
+     is rewritten, so a name given with `obtain ⟨out, h⟩ : ∃ out, … :=
+     ⟨_, ‹_›⟩` replaces an anonymous variable on the next `eval_sym`;
+  3. when stuck, split the goal on an `if` whose condition is undecided and
+     keep the condition as a rewrite rule for that branch, so every later
+     `if` on the same condition loses its dead arm without being looked at;
+  4. otherwise release the `Later` facts: `simp` stops at a `Later`, so a
+     block runs one definition at a time and each continuation is
+     simplified once, with the definitions before it decoded.
 
-**Known limits**, from using this on real contract proofs: it's slow on
-large loop bodies, because each round re-simplifies every hypothesis from
-scratch rather than running an incremental engine that only touches what
-changed; `Value`/`SigmaBoolean` have no `LawfulBEq` instance, so a few
-comparisons need manual `Value.beq`-soundness lemmas instead of plain
-`decide`/`simp`; and there are no *forward* rules that push a goal into
-`Exists`/`Fold`/`Map`'s loop shape, so those still need hand-written
-lemmas per contract, the way `sigmaOr`/`atLeast` already do above.
+  What remains is facts about the context (`ctx.outputs[k]? = some out`,
+  `out.register 5 = some (.vColl τ vs)`, `vs[0]? = some (.vLong n)`, `Int`
+  equations and bounds), disjunctions for `||`, and loop facts
+  (`forallHelper … = .ok true` etc., left folded). `eval_sym [lemmas]`
+  adds rewrite rules: local hypotheses (tracked by name as the engine
+  rewrites them), or a loop lemma such as `forallHelper_true_iff`, which
+  makes `eval_sym` expand loops under their binders. `clear_loops` drops
+  loop facts not needed any more. `eval_simp` is one plain `simp` round with
+  every `Later` released, for a goal or a statement under binders.
+  `set_option trace.eval_sym true` logs each `simp` call's time.
+
+  Example: `Contracts/SellOrder/EvalSym.lean` re-proves two `sell-order`
+  theorems in a few lines each. On a larger downstream contract (a
+  20-definition loop body with value-producing `if`s and `BigInt`
+  arithmetic), a per-input safety theorem checks in under a minute.
+
+**Known limits.** About half of the check time of a large proof is the
+elaborator instantiating the proof term: each round's new goal is a delayed
+assignment, and instantiating a chain of them is quadratic in the number
+of rounds. Running the engine in continuation-passing style with a single
+final goal would remove that. `Value`/`SigmaBoolean` have no `LawfulBEq`
+instance (it would be false for `vOption`). There are no rules that push a
+*goal* into a loop shape (liveness direction).
 
 ## What's still not modelled / assumed
 
