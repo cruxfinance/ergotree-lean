@@ -381,6 +381,15 @@ theorem checkedArith_eq_some_iff (k : NumKind) (op : Int → Int → Int) (a b z
     simp only [reduceCtorEq, false_iff]
     exact fun ⟨_, h1⟩ => h h1
 
+@[eval_inv] theorem checkedNeg_eq_some_iff (k : NumKind) (a z : Int) :
+    checkedNeg k a = some z ↔ z = -a ∧ k.lo ≤ -a ∧ -a ≤ k.hi := by
+  simp only [checkedNeg, NumKind.inRange, NumKind.lo, NumKind.hi]
+  by_cases h : k.bounds.1 ≤ -a ∧ -a ≤ k.bounds.2
+  · simp [h, eq_comm]
+  · rw [if_neg (by simpa using h)]
+    simp only [reduceCtorEq, false_iff]
+    exact fun ⟨_, h1⟩ => h h1
+
 @[eval_inv] theorem arithRes_plus_eq_some_iff (k : NumKind) (a b z : Int) :
     arithRes .plus k a b = some z ↔ z = a + b ∧ k.lo ≤ a + b ∧ a + b ≤ k.hi :=
   checkedArith_eq_some_iff k _ a b z

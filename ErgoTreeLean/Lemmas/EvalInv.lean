@@ -950,6 +950,28 @@ theorem sameKind_tele {A B : Value → Prop} {P : NumKind → Int → Int → Pr
   · rintro ⟨v, k, p, tk, z, hv, rfl, ht, hz, hw⟩; exact ⟨tk, ht, k, p, hv, z, hz, hw⟩
   · rintro ⟨tk, ht, k, p, hv, z, hz, hw⟩; exact ⟨_, k, p, tk, z, hv, rfl, ht, hz, hw⟩
 
+theorem eval_negation_ok (e : Expr) (w : Value) :
+    eval c x env (.negation e) = .ok w ↔
+      ∃ v k p, eval c x env e = .ok v ∧ v.numKind = some (k, p) ∧
+        ∃ z, checkedNeg k p = some z ∧ k.wrap z = w := by
+  simp only [eval]
+  cases h : eval c x env e with
+  | error => simp [bind, Except.bind]
+  | ok v =>
+    simp only [bind, Except.bind]
+    rcases hv : v.numKind with _ | ⟨k, p⟩ <;> simp [hv]
+    cases hu : checkedNeg k p <;> simp [pure, Except.pure]
+
+@[eval_inv] theorem eval_negation_ok' (e : Expr) (w : Value) :
+    eval c x env (.negation e) = .ok w ↔
+      ∃ (k : NumKind) (p : Int), eval c x env e = .ok (k.wrap p) ∧
+        ∃ z, checkedNeg k p = some z ∧ k.wrap z = w := by
+  rw [eval_negation_ok c x env e w]
+  simp only [Value.numKind_eq_some_iff]
+  constructor
+  · rintro ⟨v, k, p, hv, rfl, z, hz, hw⟩; exact ⟨k, p, hv, z, hz, hw⟩
+  · rintro ⟨k, p, hv, z, hz, hw⟩; exact ⟨_, k, p, hv, rfl, z, hz, hw⟩
+
 /-! ## Oracle nodes -/
 
 /-- `blake2b256`: the operand's bytes, hashed by the context's oracle. -/
