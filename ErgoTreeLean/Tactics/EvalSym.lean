@@ -49,17 +49,18 @@ attribute [eval_inv] Value.vColl.injEq Value.vBox.injEq Value.vInt.injEq Value.v
   Value.vShort.injEq Value.vBigInt.injEq SigmaBoolean.trivial.injEq SigmaBoolean.proveDlog.injEq
   Option.some.injEq Prod.mk.injEq List.cons.injEq reduceCtorEq
   exists_eq_left exists_eq_right exists_eq_left' exists_eq_right' exists_and_left exists_and_right
+  exists_exists_and_eq_and exists_exists_eq_and exists_eq_right_right exists_eq_right_right'
   and_assoc exists_const and_true true_and and_false false_and or_false false_or not_false_eq_true not_true_eq_false
   eq_self_iff_true ne_eq
   List.forall_mem_cons List.not_mem_nil false_implies implies_true forall_const
-  List.getElem?_map Option.map_eq_some_iff List.getElem?_cons_zero List.getElem?_cons_succ
+  List.getElem?_map Option.map_eq_some_iff List.getElem?_cons_zero List.getElem?_cons_succ List.getElem?_nil
   List.forall_mem_map List.mem_range List.length_map List.length_range List.length_cons List.length_nil
   Option.isSome_some Option.isSome_none
   if_true if_false Int.toNat_zero Int.toNat_natCast
   Bool.true_eq_false Bool.false_eq_true beq_iff_eq beq_self_eq_true
   Value.beq_vInt Value.beq_vLong Value.beq_vShort Value.beq_vByte Value.beq_vBigInt Value.beq_vBool
   Value.beq_vGroupElement bytesToVColl_beq_true typeOf SType.beq
-  Bool.and_eq_true Bool.not_eq_true' Bool.not_eq_false'
+  Bool.and_eq_true Bool.not_eq_true' Bool.not_eq_false' Bool.not_true Bool.not_false
   beq_eq_false_iff_ne Int.natCast_inj Int.ofNat_inj
 
 /-- `simp` stops at a `Later` (see `Lemmas/EvalInv.lean`); `eval_sym` releases it. -/
@@ -192,7 +193,9 @@ def splitAll (g : MVarId) (st : State) : MetaM (MVarId × State × Bool) := g.wi
 /-- Register new variable definitions `x = t` / `t = x` (`x` a local, not in
     `t`) as rewrite rules. Rules stay acyclic: `t` must not mention a defined
     variable (it will, after rewriting, in a later round). Of two variables,
-    the one declared later is defined, so user-named variables survive. -/
+    an engine-introduced one is defined in terms of a user-named one, so a
+    name the user gives with `obtain ⟨out, hout⟩ : ∃ out, … := ⟨_, ‹_›⟩`
+    replaces the anonymous variable everywhere on the next `eval_sym`. -/
 def addDefinitions (g : MVarId) (st : State) : MetaM (State × Bool) := g.withContext do
   let lctx ← getLCtx
   let mut st := st
@@ -205,10 +208,16 @@ def addDefinitions (g : MVarId) (st : State) : MetaM (State × Bool) := g.withCo
     let isVar (e : Expr) : Bool :=
       e.isFVar && !(lctx.get! e.fvarId!).isLet && !st.defined.contains e.fvarId!
     let mentionsDefined (e : Expr) : Bool := e.hasAnyFVar (st.defined.contains ·)
+    -- Of two variables, prefer to eliminate one the engine introduced
+    -- (inaccessible name), then the one declared later.
+    let later (x y : Expr) : Bool :=
+      let dx := lctx.get! x.fvarId!
+      let dy := lctx.get! y.fvarId!
+      (dx.userName.hasMacroScopes && !dy.userName.hasMacroScopes) ||
+        (dx.userName.hasMacroScopes == dy.userName.hasMacroScopes && dx.index > dy.index)
     let pick : Option (FVarId × Bool) :=
       if isVar a && isVar b then
-        if (lctx.get! a.fvarId!).index > (lctx.get! b.fvarId!).index then some (a.fvarId!, false)
-        else some (b.fvarId!, true)
+        if later a b then some (a.fvarId!, false) else some (b.fvarId!, true)
       else if isVar a && !b.containsFVar a.fvarId! && !mentionsDefined b then some (a.fvarId!, false)
       else if isVar b && !a.containsFVar b.fvarId! && !mentionsDefined a then some (b.fvarId!, true)
       else none
@@ -223,14 +232,19 @@ def addDefinitions (g : MVarId) (st : State) : MetaM (State × Bool) := g.withCo
   return (st, progress)
 
 /-- For hypotheses `e = some a` and `e = some b` (e.g. a register read twice),
-    replace the second by `some a = some b`. -/
-def mergeSomeEqs (g : MVarId) : MetaM (MVarId × Bool) := g.withContext do
+    replace the second by `some a = some b`; drop duplicate hypotheses. -/
+def mergeSomeEqs (g : MVarId) (st : State) : MetaM (MVarId × Bool) := g.withContext do
   let mut seen : Std.HashMap Expr (Expr × Expr) := {}
   let mut toAssert := #[]
   let mut toClear := #[]
+  let mut types : Std.HashSet Expr := {}
   for d in ← getLCtx do
     if d.isImplementationDetail then continue
     let t ← instantiateMVars d.type
+    -- A second copy of a proposition is dropped.
+    if types.contains t && !st.rules.any (·.1 == d.userName) && (← isProp t) then
+      toClear := toClear.push d.fvarId; continue
+    types := types.insert t
     let some (_, l, r) := t.eq? | continue
     unless r.isAppOfArity ``Option.some 2 do continue
     match seen[l]? with
@@ -373,11 +387,21 @@ def cleanup (g : MVarId) (st : State) : MetaM MVarId := g.withContext do
     g ← g.tryClear x
   return g
 
+/-- Close the goal if some hypothesis is `False`. -/
+def closeFalse (g : MVarId) : MetaM Bool := g.withContext do
+  for d in ← getLCtx do
+    if d.isImplementationDetail then continue
+    if (← instantiateMVars d.type).isFalse then
+      g.assign (← mkFalseElim (← g.getType) d.toExpr)
+      return true
+  return false
+
 /-- The `eval_sym` loop on one goal. -/
 partial def run (cfg : Cfg) (g : MVarId) (st : State) : MetaM (List MVarId) := do
   let (g, st, _) ← splitAll g st
+  if ← closeFalse g then return []
   let (st, _) ← addDefinitions g st
-  let (g, _) ← mergeSomeEqs g
+  let (g, _) ← mergeSomeEqs g st
   let (r, progress) ← simpNew cfg g st
   let some (g, st) := r | return []
   if progress then return ← run cfg g st
@@ -437,6 +461,17 @@ syntax "eval_sym" (" [" Lean.Parser.Tactic.simpLemma,* "]")? : tactic
 elab_rules : tactic
   | `(tactic| eval_sym) => ErgoTreeLeanEvalSym.evalSym #[]
   | `(tactic| eval_sym [$extra,*]) => ErgoTreeLeanEvalSym.evalSym extra.getElems
+
+open Lean Elab Tactic Meta in
+/-- Clear every loop fact (`forallHelper … = .ok b` and the other `*Helper`s),
+    e.g. before `eval_sym [forallHelper_true_iff]` when only the loops that
+    appear later need expanding. -/
+elab "clear_loops" : tactic => withMainContext do
+  let mut g ← getMainGoal
+  for d in ← getLCtx do
+    if d.isImplementationDetail then continue
+    if ErgoTreeLeanEvalSym.isLoopFact (← instantiateMVars d.type) then g ← g.tryClear d.fvarId
+  replaceMainGoal [g]
 
 /-- Closes `inlineFuns t = some t` for a (unfolded) literal tree `t` with no
     `ValDef`-bound lambdas; use as `(by unfold myTree; inline_funs_id)`. -/

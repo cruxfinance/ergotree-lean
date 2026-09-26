@@ -13,6 +13,8 @@ import ErgoTreeLean.Contracts.SellOrder.CrossCheck
 -- Tactics/Attr.lean transitively). The only modules in this library that
 -- import Mathlib.
 import ErgoTreeLean.Tactics.EvalSym
+-- `sell-order`'s theorems re-proved with `eval_sym` (a worked example).
+import ErgoTreeLean.Contracts.SellOrder.EvalSym
 -- Note: the differential-testing library (`ErgoTreeLean.DiffTest.Types`/
 -- `.Decode`, exposing `Case`/`loadCases`/`checkCase`/`runCases`/`Tally`)
 -- is *not* imported here — `Decode.lean` itself imports this whole root,
