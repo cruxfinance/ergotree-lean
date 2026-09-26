@@ -126,6 +126,7 @@ def collectValDefIds : Expr → List Nat
   | .extractScriptBytes e => collectValDefIds e
   | .extractAmount e => collectValDefIds e
   | .extractId e => collectValDefIds e
+  | .extractCreationInfo e => collectValDefIds e
   | .extractRegisterAs e _ _ => collectValDefIds e
   | .optionGet e => collectValDefIds e
   | .optionIsDefined e => collectValDefIds e
@@ -212,6 +213,7 @@ def rewriteExpr (m : FuncMap) : Expr → Expr
   | .extractScriptBytes e => .extractScriptBytes (rewriteExpr m e)
   | .extractAmount e => .extractAmount (rewriteExpr m e)
   | .extractId e => .extractId (rewriteExpr m e)
+  | .extractCreationInfo e => .extractCreationInfo (rewriteExpr m e)
   | .extractRegisterAs e r t => .extractRegisterAs (rewriteExpr m e) r t
   | .optionGet e => .optionGet (rewriteExpr m e)
   | .optionIsDefined e => .optionIsDefined (rewriteExpr m e)

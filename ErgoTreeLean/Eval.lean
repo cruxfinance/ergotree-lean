@@ -168,6 +168,39 @@ def toBoolList : List Value → Except EvalError (List Bool)
       pure (b :: bs)
   | _ :: _ => .error (.error "expected Coll[Boolean] element to be a Bool")
 
+/-- The tuple `Box.register`'s R3 case and `.extractCreationInfo` both
+    produce: `(creationHeight, transactionId ++ indexBEBytes index)`.
+    -- mirrors: chain/ergo_box.rs (`ErgoBox::creation_info`). -/
+def Box.creationInfoValue (b : Box) : Value :=
+  .vTuple [.vInt b.creationHeight, bytesToVColl (b.transactionId ++ Box.indexBEBytes b.index)]
+
+/-- Read a single register by index: the four mandatory registers (0..3),
+    *derived* from the box's other fields, and the six non-mandatory
+    registers (4..9), a plain lookup in `registers`. Used by
+    `ExtractRegisterAs` below.
+    -- mirrors: chain/ergo_box.rs (`ErgoBox::get_register`, ~line 154):
+    `R0 ↦ Some(value.into())` (`SLong`), `R1 ↦ Some(script_bytes().into())`
+    (`Coll[Byte]` — this model's `propositionBytes` is already exactly
+    `script_bytes()`, see `Syntax.lean`), `R2 ↦ Some(tokens_raw().into())`
+    (`Coll[(Coll[Byte], Long)]`, matching the `Box.tokens` PropertyCall
+    case below byte for byte), `R3 ↦ Some(creation_info().into())`
+    (`Box.creationInfoValue` above); 4..9 ↦
+    `additional_registers.get_constant`, i.e. the `Box.registers` lookup
+    this function used to be (before mandatory registers were derived).
+    Unlike sigma-rust's `Result<Option<Constant>, RegisterValueError>`
+    (which can fail on an unparseable *stored* register value), this model
+    has no "unparseable" `Value` to represent, so every mandatory register
+    is always `some` — matching the success path `get_register`/
+    `extract_reg_as.rs` take for every `Box` this model can construct. -/
+def Box.register (b : Box) (idx : Int) : Option Value :=
+  if idx == 0 then some (.vLong b.value)
+  else if idx == 1 then some (bytesToVColl b.propositionBytes)
+  else if idx == 2 then
+    some (.vColl (.sTuple [.sColl .sByte, .sLong])
+      (b.tokens.map (fun (tid, amt) => .vTuple [bytesToVColl tid, .vLong amt])))
+  else if idx == 3 then some b.creationInfoValue
+  else (b.registers.find? (fun p => (p.1 : Int) == idx)).map Prod.snd
+
 /-- Bind a `FuncValue`'s parameter list to a list of already-evaluated
     argument values, in order; `none` on an arity mismatch. -/
 def bindArgs (env : Env) : List (Nat × SType) → List Value → Option Env
@@ -443,6 +476,12 @@ def eval (consts : List Value) (ctx : Context) (env : Env) : Expr → Except Eva
       match v with
       | .vBox b => pure (bytesToVColl b.id)
       | _ => .error (.error "extractId: not a Box")
+  -- mirrors: eval/extract_creation_info.rs
+  | .extractCreationInfo e => do
+      let v ← eval consts ctx env e
+      match v with
+      | .vBox b => pure b.creationInfoValue
+      | _ => .error (.error "extractCreationInfo: not a Box")
   -- mirrors: eval/extract_reg_as.rs (no type-check against `elemTpe` —
   -- a mismatch only surfaces later, when the `Value` is used)
   | .extractRegisterAs input registerId _elemTpe => do

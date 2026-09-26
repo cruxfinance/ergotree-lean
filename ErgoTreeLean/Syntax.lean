@@ -299,14 +299,37 @@ structure Box where
   propositionBytes : List UInt8
   tokens : List (List UInt8 × Int)
   registers : List (Nat × Value)
+  /-- Mirrors `ErgoBox.creation_height : u32` (`chain/ergo_box.rs`): the
+      height, as declared by the box's creator, of the transaction that
+      created it. Read back as an `SInt` by R3/`ExtractCreationInfo`
+      (`creation_info()`'s `self.creation_height as i32`) — like `value`
+      above, this model stores the field as a plain `Int` and does not
+      range-check it (a real chain's height never approaches 2^31, so the
+      `u32`→`i32` two's-complement wraparound `as i32` can in principle
+      trigger is not modelled). Default `0` keeps every `{ id := …, value
+      := …, … }` literal predating creation info compiling unchanged. -/
+  creationHeight : Int := 0
+  /-- Mirrors `ErgoBox.transaction_id : TxId` (`chain/tx_id.rs`), the id of
+      the transaction that created this box — a `Digest32`, i.e. exactly
+      32 bytes. Default: 32 zero bytes, mirroring `TxId::zero()`. -/
+  transactionId : List UInt8 := List.replicate 32 (0 : UInt8)
+  /-- Mirrors `ErgoBox.index : u16` (`chain/ergo_box.rs`): this box's
+      output index (0..65535) in the transaction that created it. Default
+      `0`. No range check (see `creationHeight`'s docstring). -/
+  index : Int := 0
 deriving Repr
 
 end
 
-/-- Read a single non-mandatory register by index (4..9), or `none` if
-    absent. Used by `ExtractRegisterAs` in `Eval.lean`. -/
-def Box.register (b : Box) (idx : Int) : Option Value :=
-  (b.registers.find? (fun p => (p.1 : Int) == idx)).map Prod.snd
+/-- Big-endian encoding of a `u16` (`Box.index`), matching Rust's
+    `u16::to_be_bytes()` — the tail of `creation_info()`'s byte layout
+    (`Eval.lean`'s `Box.register`, R3/`ExtractCreationInfo`:
+    `transactionId ++ indexBEBytes index`). Truncates to 16 bits via
+    `% 65536` (two's-complement `u16` wraparound); `index` is never
+    actually outside `0..65535` in a well-formed box. -/
+def Box.indexBEBytes (idx : Int) : List UInt8 :=
+  let n := idx.toNat % 65536
+  [UInt8.ofNat (n / 256), UInt8.ofNat (n % 256)]
 
 /-- Expression AST, mirroring `ergotree_ir::mir::expr::Expr` (see module
     docstring for the departures from a literal 1:1 mirror). Only the MIR
@@ -376,6 +399,13 @@ inductive Expr where
   /-- `ExtractId`: a box's id (opaque bytes — hashing not modelled, see
       `Box.id`). -/
   | extractId (e : Expr)
+  /-- `ExtractCreationInfo`: `box.creationInfo`, i.e. `(SInt, Coll[Byte])` —
+      the height the box's creating transaction declared, paired with that
+      transaction's id concatenated with this box's output index
+      (big-endian `u16`). Mirrors `mir/extract_creation_info.rs`'s
+      `ExtractCreationInfo`; see `Eval.lean`'s `Box.register`, which
+      derives the identical tuple for R3. -/
+  | extractCreationInfo (e : Expr)
   /-- `ExtractRegisterAs`: `box.RX[T]`, result type `SOption T`. No
       type-check against `elemTpe` is performed (`extract_reg_as.rs`
       returns whatever `Value` is stored, untyped) — see `Eval.lean`. -/
@@ -507,12 +537,16 @@ def Value.beqList : List Value → List Value → Bool
   | _, _ => false
 
 /-- Full structural `Box` equality (id, value, propositionBytes, tokens,
-    registers) — mirrors `ErgoBox`'s derived `PartialEq` in sigma-rust.
+    registers, creationHeight, transactionId, index) — mirrors `ErgoBox`'s
+    derived `PartialEq` in sigma-rust (which also compares `box_id`,
+    `value`, `ergo_tree`, `tokens`, `additional_registers`,
+    `creation_height`, `transaction_id`, `index` — the same eight fields).
     No contract in this repo compares two `Box`es directly with `==`
     (only specific projected fields); included for completeness/fidelity. -/
 def Box.beq : Box → Box → Bool
-  | ⟨id1, v1, p1, t1, r1⟩, ⟨id2, v2, p2, t2, r2⟩ =>
+  | ⟨id1, v1, p1, t1, r1, ch1, tx1, ix1⟩, ⟨id2, v2, p2, t2, r2, ch2, tx2, ix2⟩ =>
       id1 == id2 && v1 == v2 && p1 == p2 && Box.beqTokens t1 t2 && Box.beqRegisters r1 r2
+        && ch1 == ch2 && tx1 == tx2 && ix1 == ix2
 
 def Box.beqTokens : List (List UInt8 × Int) → List (List UInt8 × Int) → Bool
   | [], [] => true

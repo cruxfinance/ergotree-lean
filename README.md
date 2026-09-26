@@ -65,7 +65,13 @@ Ergo mainnet":
   structural map. Only the MIR node kinds that occur in the contracts
   covered by this repo (or a downstream package built on it) are given
   constructors; anything else fails loudly at export time rather than
-  being approximated.
+  being approximated. `Box` carries `creationHeight`/`transactionId`/
+  `index` (mirroring `ErgoBox`'s own fields), from which
+  `ExtractCreationInfo` and the four mandatory registers R0-R3 are
+  *derived* — `Box.register`/`Eval.lean` compute R0 (value), R1
+  (propositionBytes), R2 (tokens) and R3 (creationInfo) from those
+  fields on every read, exactly like `ergo_box.rs`'s `get_register`; R4-R9
+  stay a plain lookup in `Box.registers`.
 - **Numeric semantics** (`ErgoTreeLean/Numeric.lean`): checked, per-width
   arithmetic (`Byte`/`Short`/`Int`/`Long`/`BigInt`, each range-checked
   against its own bound), truncating (not Euclidean) division/modulo,
@@ -348,9 +354,19 @@ import the whole root themselves (for `bytesToVColl`/`hexStringToBytes`/
 directly, exactly as this repo's own `Main.lean` does. This repo's own
 `lean_exe difftest` (`ErgoTreeLean/DiffTest/Main.lean`) loads
 `sell-order-cases.json`, runs `runCases` against `sellOrderTree`, and
-exits nonzero on any mismatch.
+exits nonzero on any mismatch. Two more families cover R0-R3/
+`ExtractCreationInfo`: `box-fields` (`ErgoTreeLean/Contracts/BoxFields.lean`,
+a hand-written synthetic tree exercising R0-R3/`ExtractCreationInfo` on
+`SELF`/`INPUTS(0)`/`OUTPUTS(0)`) and `timelock` (the real mainnet
+`sigmaProp(HEIGHT >= SELF.creationInfo._1 + 720) && PK(...)` tree,
+exported to `ErgoTreeLean/Contracts/Timelock/Exported.lean`) — `Main.lean`
+runs both and sums their mismatches into the `box-fields`-labelled total
+alongside `sell-order`'s.
 
-**Result, current seed:** `sell-order`: 300 cases, 0 mismatches.
+**Result, current seed:** `sell-order`: 300 cases, 0 mismatches;
+`box-fields`: 300 cases, 0 mismatches (150 trivial-true, 100
+trivial-false, 50 evaluation-error); `timelock`: 150 cases, 0 mismatches
+(50 trivial-false, 100 proveDlog).
 
 ### Difftest library usage (downstream)
 

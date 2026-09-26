@@ -61,7 +61,7 @@ theorem Value.beqList_refl : ∀ vs : List Value, Value.beqList vs vs = true
   | v :: vs => by simp [Value.beqList, Value.beq_refl v, Value.beqList_refl vs]
 
 theorem Box.beq_refl : ∀ b : Box, Box.beq b b = true
-  | ⟨_id, _v, _p, t, r⟩ => by simp [Box.beq, Box.beqTokens_refl t, Box.beqRegisters_refl r]
+  | ⟨_id, _v, _p, t, r, _ch, _tx, _ix⟩ => by simp [Box.beq, Box.beqTokens_refl t, Box.beqRegisters_refl r]
 
 theorem Box.beqTokens_refl : ∀ t : List (List UInt8 × Int), Box.beqTokens t t = true
   | [] => by simp [Box.beqTokens]

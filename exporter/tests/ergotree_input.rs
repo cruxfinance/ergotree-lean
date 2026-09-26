@@ -15,10 +15,10 @@
 //! - `--ergotree` together with `--hex` is rejected at the CLI level;
 //! - two real trees pulled from the node's mempool: a bare `sigmaProp(true)`
 //!   root (no constants segment) exports end to end, and a `HEIGHT >=
-//!   SELF.creationInfo._1 + 720 && PK(...)` timelock's `--inventory` and
-//!   constants (an `Int` and a `SigmaProp`/`ProveDlog`) are covered —
-//!   see `real_mempool_trees` below for why that timelock's *expression*
-//!   still can't fully export.
+//!   SELF.creationInfo._1 + 720 && PK(...)` timelock (`--inventory`,
+//!   constants — an `Int` and a `SigmaProp`/`ProveDlog`) is covered —
+//!   see `real_mempool_trees` below, including its full export, now that
+//!   `ExtractCreationInfo` support has landed.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -343,17 +343,13 @@ mod real_mempool_trees {
     }
 
     #[test]
-    fn timelock_full_export_fails_on_extract_creation_info_not_constants() {
-        // The timelock's *expression* uses `SELF.creationInfo._1`
-        // (`Expr::ExtractCreationInfo`), which has no `Expr`/`eval` case in
-        // `Syntax.lean`/`Eval.lean` — a pre-existing, unrelated gap (adding
-        // one means new `ErgoTreeLean/*.lean` coverage, out of scope here).
-        // This asserts the failure is specifically that gap, not a
-        // regression of the constant-emission fix: the constants segment
-        // itself (an `Int` and the `SigmaProp`/`ProveDlog` this module is
-        // about) parses and would emit fine on its own — see
-        // `timelock_provedlog_constant_value` for that in isolation.
-        let out = run(&[
+    fn timelock_full_export_succeeds() {
+        // The timelock's expression uses `SELF.creationInfo._1`
+        // (`Expr::ExtractCreationInfo`); now that `Syntax.lean`/`Eval.lean`/
+        // `emit.rs` all support it, this tree fully exports — flipped from
+        // this test's old shape (`timelock_full_export_fails_on_extract_creation_info_not_constants`),
+        // which asserted the pre-existing gap.
+        let out = run_ok(&[
             "--ergotree",
             TIMELOCK_WITH_PK,
             "--lean-name",
@@ -361,18 +357,19 @@ mod real_mempool_trees {
             "--namespace",
             "Test",
         ]);
-        assert!(
-            !out.status.success(),
-            "expected this tree's full export to still fail (ExtractCreationInfo is unsupported)"
+        let body = extract_expr_body(&out, "mempoolTimelock");
+        assert_eq!(
+            body,
+            ".sigmaAnd [.boolToSigmaProp (.binOp (BinOpKind.relation RelationOp.ge) .height \
+             (.binOp (BinOpKind.arith ArithOp.plus) (.selectField (.extractCreationInfo .selfBox) 1) \
+             (.constPlaceholder 0 SType.sInt))), .constPlaceholder 1 SType.sSigmaProp]"
         );
-        let stderr = String::from_utf8_lossy(&out.stderr);
+
+        let consts = extract_consts_list(&out, "mempoolTimelock");
+        assert!(consts.starts_with("[(Value.vInt 720)"), "expected constant 0 to be Int(720): {consts}");
         assert!(
-            stderr.contains("ExtractCreationInfo"),
-            "expected the ExtractCreationInfo gap, not a constants/SigmaProp failure: {stderr}"
-        );
-        assert!(
-            !stderr.contains("emitting constant"),
-            "must not fail on constant emission (that's the bug being fixed here): {stderr}"
+            consts.contains("(Value.vSigmaProp (SigmaBoolean.proveDlog"),
+            "expected constant 1 to be a Value.vSigmaProp/proveDlog: {consts}"
         );
     }
 

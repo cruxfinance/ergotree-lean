@@ -22,11 +22,21 @@ namespace ErgoTreeLean.DiffTest
 def runMain : IO UInt32 := do
   let sellOrderCases ← loadCases "ErgoTreeLean/DiffTest/sell-order-cases.json"
   let m1 ← runCases "sell-order" ErgoTreeLean.Contracts.SellOrder.sellOrderTree sellOrderCases
-  if m1 == 0 then
+  -- `box-fields`: R0-R3/`ExtractCreationInfo` on SELF/INPUTS/OUTPUTS (a
+  -- hand-written synthetic tree) plus the real mainnet timelock tree
+  -- (`ExtractCreationInfo` via `SigmaAnd`) — two trees, reported together
+  -- as one family since both cover the same new coverage — see
+  -- `ErgoTreeLean/Contracts/BoxFields.lean`/`Contracts/Timelock/Exported.lean`.
+  let boxFieldsCases ← loadCases "ErgoTreeLean/DiffTest/box-fields-cases.json"
+  let m2 ← runCases "box-fields" ErgoTreeLean.Contracts.boxFieldsTree boxFieldsCases
+  let timelockCases ← loadCases "ErgoTreeLean/DiffTest/timelock-cases.json"
+  let m3 ← runCases "box-fields (timelock)" ErgoTreeLean.Contracts.Timelock.Exported.timelockTree timelockCases
+  let total := m1 + m2 + m3
+  if total == 0 then
     IO.println "difftest: 0 mismatches"
     pure 0
   else
-    IO.println s!"difftest: {m1} mismatches"
+    IO.println s!"difftest: {total} mismatches"
     pure 1
 
 end ErgoTreeLean.DiffTest

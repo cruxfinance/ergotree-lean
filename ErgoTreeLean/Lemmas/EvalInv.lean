@@ -129,6 +129,11 @@ local macro "inv_unary" e:term : tactic => `(tactic| (
     eval c x env (.extractId e) = .ok w ↔ ∃ b, eval c x env e = .ok (.vBox b) ∧ w = bytesToVColl b.id := by
   inv_unary e
 
+@[eval_inv] theorem eval_extractCreationInfo_ok (e : Expr) (w : Value) :
+    eval c x env (.extractCreationInfo e) = .ok w ↔
+      ∃ b, eval c x env e = .ok (.vBox b) ∧ w = b.creationInfoValue := by
+  inv_unary e
+
 @[eval_inv] theorem eval_extractRegisterAs_ok (e : Expr) (r : Int) (t : SType) (w : Value) :
     eval c x env (.extractRegisterAs e r t) = .ok w ↔
       ∃ b, eval c x env e = .ok (.vBox b) ∧ w = .vOption t (b.register r) := by

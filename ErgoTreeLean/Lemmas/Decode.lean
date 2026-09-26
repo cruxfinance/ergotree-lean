@@ -97,7 +97,7 @@ def Value.optFreeList : List Value → Bool
   | v :: vs => Value.optFree v && Value.optFreeList vs
 
 def Box.optFree : Box → Bool
-  | ⟨_, _, _, _, r⟩ => Box.optFreeRegs r
+  | ⟨_, _, _, _, r, _, _, _⟩ => Box.optFreeRegs r
 
 def Box.optFreeRegs : List (Nat × Value) → Bool
   | [] => true
@@ -147,11 +147,11 @@ theorem Value.eq_of_beqList_of_optFree :
   | _ :: _, [], _, h => by simp [Value.beqList] at h
 
 theorem Box.eq_of_beq_of_optFree : ∀ (a b : Box), a.optFree = true → Box.beq a b = true → a = b
-  | ⟨i1, v1, p1, t1, r1⟩, ⟨i2, v2, p2, t2, r2⟩, ho, h => by
+  | ⟨i1, v1, p1, t1, r1, ch1, tx1, ix1⟩, ⟨i2, v2, p2, t2, r2, ch2, tx2, ix2⟩, ho, h => by
     simp only [Box.beq, Bool.and_eq_true, beq_iff_eq] at h
     simp only [Box.optFree] at ho
-    obtain ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩ := h
-    rw [h1, h2, h3, beqTokens_eq t1 t2 h4, Box.eq_of_beqRegisters_of_optFree r1 r2 ho h5]
+    obtain ⟨⟨⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩, h6⟩, h7⟩, h8⟩ := h
+    rw [h1, h2, h3, beqTokens_eq t1 t2 h4, Box.eq_of_beqRegisters_of_optFree r1 r2 ho h5, h6, h7, h8]
 
 theorem Box.eq_of_beqRegisters_of_optFree :
     ∀ (a b : List (Nat × Value)), Box.optFreeRegs a = true → Box.beqRegisters a b = true → a = b
@@ -223,11 +223,11 @@ theorem Value.eq_of_beqList_of_optFree_right :
   | _ :: _, [], _, h => by simp [Value.beqList] at h
 
 theorem Box.eq_of_beq_of_optFree_right : ∀ (b a : Box), b.optFree = true → Box.beq a b = true → a = b
-  | ⟨i2, v2, p2, t2, r2⟩, ⟨i1, v1, p1, t1, r1⟩, ho, h => by
+  | ⟨i2, v2, p2, t2, r2, ch2, tx2, ix2⟩, ⟨i1, v1, p1, t1, r1, ch1, tx1, ix1⟩, ho, h => by
     simp only [Box.beq, Bool.and_eq_true, beq_iff_eq] at h
     simp only [Box.optFree] at ho
-    obtain ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩ := h
-    rw [h1, h2, h3, beqTokens_eq t1 t2 h4, Box.eq_of_beqRegisters_of_optFree_right r2 r1 ho h5]
+    obtain ⟨⟨⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩, h6⟩, h7⟩, h8⟩ := h
+    rw [h1, h2, h3, beqTokens_eq t1 t2 h4, Box.eq_of_beqRegisters_of_optFree_right r2 r1 ho h5, h6, h7, h8]
 
 theorem Box.eq_of_beqRegisters_of_optFree_right :
     ∀ (b a : List (Nat × Value)), Box.optFreeRegs b = true → Box.beqRegisters a b = true → a = b

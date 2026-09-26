@@ -5,5 +5,9 @@
 //! README.md's "Difftest library usage".
 
 fn main() -> anyhow::Result<()> {
-    difftest::run_cli(&[("sell-order", difftest::sell_order::generate)])
+    difftest::run_cli(&[
+        ("sell-order", difftest::sell_order::generate),
+        ("box-fields", difftest::box_fields::generate),
+        ("timelock", difftest::timelock::generate),
+    ])
 }

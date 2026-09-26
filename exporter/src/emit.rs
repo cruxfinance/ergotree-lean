@@ -393,6 +393,7 @@ pub fn emit(e: &Expr) -> Result<String> {
         Expr::ExtractScriptBytes(v) => format!(".extractScriptBytes {}", paren(&emit(&v.input)?)),
         Expr::ExtractAmount(v) => format!(".extractAmount {}", paren(&emit(&v.input)?)),
         Expr::ExtractId(v) => format!(".extractId {}", paren(&emit(&v.input)?)),
+        Expr::ExtractCreationInfo(v) => format!(".extractCreationInfo {}", paren(&emit(&v.input)?)),
         Expr::ExtractRegisterAs(sp) => {
             let er = sp.expr();
             let input = emit(&er.input)?;

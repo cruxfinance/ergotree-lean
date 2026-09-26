@@ -31,7 +31,11 @@ by kernel proof.
   `{"tag": "vOption", "v": null | Value}`, `{"tag": "vTuple", "items":
   [Value]}`, `{"tag": "vBox", "box": Box}`.
 - `Box`: `{"id": hex, "value": String, "propositionBytes": hex, "tokens":
-  [[hex, String]], "registers": [[Nat, Value]]}`.
+  [[hex, String]], "registers": [[Nat, Value]], "creationHeight": Int,
+  "transactionId": hex, "index": Nat}` — the last three are
+  `ErgoBox.creation_height as i32`/`transaction_id`/`index`, what R3/
+  `ExtractCreationInfo` derive `creationInfo` from (see `Syntax.lean`'s
+  `Box`/`Eval.lean`'s `Box.register`).
 - `Context` (embedded in `Case.ctx`): `{"selfBox": Box, "inputs": [Box],
   "outputs": [Box], "dataInputs": [Box], "height": Nat, "extension":
   [[Nat, Value]], "blake2b": [[hex, hex]]?, "deserialize": [[hex,
@@ -183,7 +187,10 @@ partial def decodeBox (j : Json) : Except String Box := do
     let idx ← (← arrGet arr 0).getNat?
     let v ← decodeValue (← arrGet arr 1)
     pure (idx, v))
-  pure (Box.mk id value propBytes tokens regs)
+  let creationHeight ← (← j.getObjVal? "creationHeight").getInt?
+  let transactionId ← decodeHex (← (← j.getObjVal? "transactionId").getStr?)
+  let index ← (← j.getObjVal? "index").getNat?
+  pure (Box.mk id value propBytes tokens regs creationHeight transactionId (index : Int))
 
 -- In the same `mutual` block as `decodeValue`/`decodeBox` (not after
 -- them) because `decodeValue`'s `"vSigmaProp"` case (the `deserialize`

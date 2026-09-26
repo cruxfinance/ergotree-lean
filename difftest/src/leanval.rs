@@ -123,11 +123,18 @@ pub fn literal_to_json(lit: &Literal) -> Result<Json> {
 /// Convert an `ErgoBox` to JSON. `propositionBytes` mirrors
 /// `eval/extract_script_bytes.rs`'s `b.script_bytes()` — the box's full
 /// serialized `ErgoTree` (header + segregated constants + body), not just
-/// the substituted proposition.
+/// the substituted proposition. `creationHeight`/`transactionId`/`index`
+/// are the three fields `ErgoBox::creation_info()`/R3 derive from (see
+/// `Decode.lean`'s module docstring for the schema) — `creationHeight` is
+/// emitted as `creation_height as i32`, the exact cast `creation_info()`
+/// itself performs, so this model's `Box.creationHeight` field is always
+/// fed the same value R3/`ExtractCreationInfo` would read.
 pub fn box_to_json(b: &ErgoBox) -> Result<Json> {
     let id_bytes = b.box_id().sigma_serialize_bytes().context("serializing box id")?;
     let prop_bytes = b.ergo_tree.sigma_serialize_bytes().context("serializing ergo_tree")?;
     let value: i64 = b.value.into();
+    let creation_height = b.creation_height as i32;
+    let transaction_id_bytes: &[u8] = b.transaction_id.as_ref();
     let tokens: Vec<Json> = b
         .tokens
         .as_ref()
@@ -162,6 +169,9 @@ pub fn box_to_json(b: &ErgoBox) -> Result<Json> {
         "propositionBytes": hex_of(&prop_bytes),
         "tokens": tokens,
         "registers": regs,
+        "creationHeight": creation_height,
+        "transactionId": hex_of(transaction_id_bytes),
+        "index": b.index,
     }))
 }
 

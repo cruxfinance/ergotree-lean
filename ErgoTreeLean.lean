@@ -9,6 +9,14 @@ import ErgoTreeLean.Deserialize
 import ErgoTreeLean.Contracts.SellOrder
 import ErgoTreeLean.Contracts.SellOrder.Exported
 import ErgoTreeLean.Contracts.SellOrder.CrossCheck
+-- `box-fields` differential-test family: a hand-written synthetic tree
+-- exercising R0-R3/`ExtractCreationInfo` on SELF/INPUTS/OUTPUTS (see
+-- `Contracts/BoxFields.lean`).
+import ErgoTreeLean.Contracts.BoxFields
+-- The real mainnet timelock tree (`sigmaProp(HEIGHT >= SELF.creationInfo._1
+-- + 720) && PK(...)`), exported by the Rust exporter — the `box-fields`
+-- family's second, real-world tree (see `Contracts/Timelock/Exported.lean`).
+import ErgoTreeLean.Contracts.Timelock.Exported
 -- Symbolic-evaluation tactic tooling (pulls in Lemmas/EvalInv.lean,
 -- Lemmas/EvalHolds.lean, Lemmas/SigmaHolds.lean, Lemmas/Beq.lean,
 -- Tactics/Attr.lean transitively). The only modules in this library that

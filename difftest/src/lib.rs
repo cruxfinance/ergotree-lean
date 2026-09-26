@@ -27,8 +27,10 @@
 //! "Difftest library usage" for how a downstream package wires up its
 //! own binary against this same library.
 
+pub mod box_fields;
 pub mod leanval;
 pub mod sell_order;
+pub mod timelock;
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
