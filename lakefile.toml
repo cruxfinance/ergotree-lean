@@ -1,0 +1,21 @@
+name = "ergotree-lean"
+defaultTargets = ["ErgoTreeLean"]
+
+# Mathlib, pinned to the tag matching `lean-toolchain` (v4.24.0). Only for
+# the proof-automation tooling under `ErgoTreeLean/Lemmas/`/
+# `ErgoTreeLean/Tactics/` — never imported by the core model
+# (`Syntax`/`Context`/`Eval`/`Numeric`/`InlineFuns`/`Sigma`) or by the
+# difftest library's Lean side (`ErgoTreeLean/DiffTest/`), so `lake exe
+# difftest` and the trusted evaluator stay Mathlib-free. See README's
+# "Building" section for the `lake exe cache get` build-time note.
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "v4.24.0"
+
+[[lean_lib]]
+name = "ErgoTreeLean"
+
+[[lean_exe]]
+name = "difftest"
+root = "ErgoTreeLean.DiffTest.Main"

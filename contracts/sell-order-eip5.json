@@ -1,0 +1,29 @@
+{
+  "treeVersion" : null,
+  "name" : "sellOrder",
+  "description" : "Sell order: seller cancels with signature, or anyone spends if OUTPUTS(0) pays the seller >= price.",
+  "constTypes" : [
+    "07",
+    "0e",
+    "05"
+  ],
+  "constValues" : null,
+  "parameters" : [
+    {
+      "name" : "sellerPk",
+      "description" : "Seller public key",
+      "constantIndex" : 0
+    },
+    {
+      "name" : "sellerProp",
+      "description" : "Seller proposition bytes",
+      "constantIndex" : 1
+    },
+    {
+      "name" : "price",
+      "description" : "Minimum nanoERG paid to seller",
+      "constantIndex" : 2
+    }
+  ],
+  "expressionTree" : "d801d601b2a5040000eb02cd7300d1ed93c27201730192c172017302"
+}
