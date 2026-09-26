@@ -17,7 +17,8 @@ and bounds, …), `∀`-statements for collection loops, and disjunctions for `|
 
 1. split every `∧`/`∃` hypothesis into separate hypotheses;
 2. substitute every equation that defines a variable;
-3. merge two hypotheses `e = some a`, `e = some b` into `a = b`;
+3. merge two hypotheses `e = some a`, `e = some b` (or `e = .ok a`, `e = .ok b`)
+   into `a = b`;
 4. `simp` with the `eval_inv` rules, but only the hypotheses whose statement is
    new. A statement `simp` has already normalized, or a part of one, is never
    simplified again (unless a new rule can rewrite it), so the cost of a round
@@ -57,7 +58,7 @@ namespace ErgoTreeLean
 attribute [eval_inv] Value.vColl.injEq Value.vBox.injEq Value.vInt.injEq Value.vLong.injEq Value.vBool.injEq
   Value.vOption.injEq Value.vSigmaProp.injEq Value.vTuple.injEq Value.vGroupElement.injEq Value.vByte.injEq
   Value.vShort.injEq Value.vBigInt.injEq SigmaBoolean.trivial.injEq SigmaBoolean.proveDlog.injEq
-  Option.some.injEq Prod.mk.injEq List.cons.injEq reduceCtorEq
+  Option.some.injEq Except.ok.injEq Prod.mk.injEq List.cons.injEq reduceCtorEq
   exists_eq_left exists_eq_right exists_eq_left' exists_eq_right' exists_and_left exists_and_right
   exists_exists_and_eq_and exists_exists_eq_and exists_eq_right_right exists_eq_right_right'
   and_assoc exists_const and_true true_and and_false false_and or_false false_or not_false_eq_true not_true_eq_false
@@ -301,17 +302,22 @@ def addDefinitions (t : Tele) (st : State) : MetaM State := t.run do
 /-- One round's changes: every hypothesis whose statement is not in normal
     form is simplified (with the rules as extra rewrite rules), every `∧`/`∃`
     hypothesis is split, a second copy of a proposition is dropped, and of two
-    hypotheses `e = some a`, `e = some b` (e.g. a register read twice) the
-    second becomes `some a = some b`. Returns the new facts and the hypotheses
+    hypotheses `e = some a`, `e = some b` (e.g. a register read twice; also
+    `e = .ok a`, `e = .ok b`) the second becomes `some a = some b`. Returns the new facts and the hypotheses
     they replace, or `.inl pf` if a hypothesis became `False` (`pf` proves the
     target). -/
 def collect (cfg : Cfg) (target : Expr) (t : Tele) (st : State) :
     MetaM (Expr ⊕ (Array Fact × Array FVarId × State)) := t.run do
   let mut ctx := cfg.ctx
+  -- The variable definitions alone, for the loop facts.
+  let mut defThms : SimpTheoremsArray := #[{}]
+  let defNames : Std.HashSet Name := st.defs.foldl (·.insert ·.1) {}
   for (n, flip) in st.rules do
     if let some d := t.lctx.findFromUserName? n then
       let pf ← if flip then mkEqSymm d.toExpr else pure d.toExpr
       ctx := ctx.setSimpTheorems (← ctx.simpTheorems.addTheorem (.fvar d.fvarId) pf)
+      if defNames.contains n then defThms ← defThms.addTheorem (.fvar d.fvarId) pf
+  let defCtx ← Simp.mkContext (simpTheorems := defThms)
   let mut st := st
   let mut facts : Array Fact := #[]
   let mut drop := #[]
@@ -329,8 +335,10 @@ def collect (cfg : Cfg) (target : Expr) (t : Tele) (st : State) :
       facts := facts.push (d.toExpr, ty, st.done.contains ty, none)
       drop := drop.push d.fvarId
       continue
-    if !st.done.contains ty && (cfg.loops || !isLoopFact ty) then
-      let ctx' := ctx.setSimpTheorems (ctx.simpTheorems.eraseTheorem (.fvar d.fvarId))
+    let loopOnly := !cfg.loops && isLoopFact ty
+    if !st.done.contains ty && (!loopOnly || ty.hasAnyFVar st.defined.contains) then
+      -- A loop fact is only rewritten with the variable definitions.
+      let ctx' := if loopOnly then defCtx else ctx.setSimpTheorems (ctx.simpTheorems.eraseTheorem (.fvar d.fvarId))
       let t0 ← IO.monoMsNow
       let (r, _) ← simp ty ctx' cfg.simprocs none
       let dt := (← IO.monoMsNow) - t0
@@ -351,12 +359,18 @@ def collect (cfg : Cfg) (target : Expr) (t : Tele) (st : State) :
       st := { st with done := st.done.insert ty }
     -- `ty` stays: look for a second read of the same `e = some _`.
     let some (_, l, rhs) := ty.eq? | continue
-    unless rhs.isAppOfArity ``Option.some 2 do continue
+    unless rhs.isAppOfArity ``Option.some 2 || rhs.isAppOfArity ``Except.ok 3 do continue
     match seen[l]? with
     | none => seen := seen.insert l (d.toExpr, rhs)
     | some (h1, r1) =>
       if isRule then continue
-      drop := drop.push d.fvarId
+      -- Keep the one the user named.
+      let n1 := (t.lctx.getFVar! h1).userName
+      if n1.hasMacroScopes && !d.userName.hasMacroScopes then
+        drop := drop.push h1.fvarId!
+        seen := seen.insert l (d.toExpr, rhs)
+      else
+        drop := drop.push d.fvarId
       unless r1 == rhs do
         let pf ← mkEqTrans (← mkEqSymm h1) d.toExpr
         facts := facts.push (pf, ← inferType pf, false, none)
