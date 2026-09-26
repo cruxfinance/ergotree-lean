@@ -7,11 +7,15 @@
 use anyhow::{bail, Context, Result};
 use ergotree_ir::mir::bin_op::{ArithOp, BinOpKind, BitOp, LogicalOp, RelationOp};
 use ergotree_ir::mir::collection::Collection;
-use ergotree_ir::mir::constant::Literal;
+use ergotree_ir::mir::constant::{Constant, Literal};
 use ergotree_ir::mir::expr::Expr;
 use ergotree_ir::mir::global_vars::GlobalVars;
 use ergotree_ir::mir::value::{CollKind, NativeColl};
+use ergotree_ir::sigma_protocol::sigma_boolean::{
+    SigmaBoolean, SigmaConjecture, SigmaProofOfKnowledgeTree,
+};
 use ergotree_ir::types::stype::SType;
+use sigma_ser::ScorexSerializable;
 
 /// Wrap `s` in parens if it looks like an application (contains whitespace
 /// at the top level) and isn't already parenthesized/bracketed — i.e. make
@@ -48,6 +52,49 @@ fn fmt_bigint(v: &ergotree_ir::bigint256::BigInt256) -> String {
         Some(mag) => format!("(-{mag})"),
         None => s,
     }
+}
+
+/// Emit a `SigmaBoolean` (`Syntax.lean`'s `SigmaBoolean`, backing
+/// `Value.vSigmaProp`) as a Lean term — used for an inline `SigmaProp`
+/// constant/literal (e.g. `PK("...")`/`sigmaProp(true)` compiles to one),
+/// which `ergotree-ir` gives as its own `sigma_protocol::sigma_boolean`
+/// type, not a `Literal`. Mirrors `difftest/src/leanval.rs`'s
+/// `sigma_boolean_to_json` tag-for-tag (`ErgoTreeLean/DiffTest/Decode.lean`
+/// decodes that same JSON shape back), so a value built here and one
+/// round-tripped through the differential test agree byte-for-byte —
+/// `ProveDlog`'s key uses the same `scorex_serialize_bytes` encoding as
+/// `Literal::GroupElement` above. `ProveDhTuple` has no `SigmaBoolean`
+/// constructor in `Syntax.lean` (see its module docstring), so it fails
+/// loudly by name, same as an unsupported MIR node.
+fn sigma_boolean_to_lean(sb: &SigmaBoolean) -> Result<String> {
+    Ok(match sb {
+        SigmaBoolean::TrivialProp(b) => {
+            format!("(SigmaBoolean.trivial {})", if *b { "true" } else { "false" })
+        }
+        SigmaBoolean::ProofOfKnowledge(SigmaProofOfKnowledgeTree::ProveDlog(pd)) => {
+            let bytes = pd
+                .h
+                .scorex_serialize_bytes()
+                .context("serializing ProveDlog public key")?;
+            let items: Vec<String> = bytes.iter().map(|b| b.to_string()).collect();
+            format!("(SigmaBoolean.proveDlog [{}])", items.join(", "))
+        }
+        SigmaBoolean::ProofOfKnowledge(SigmaProofOfKnowledgeTree::ProveDhTuple(_)) => {
+            bail!("sigma_boolean_to_lean: ProveDhTuple has no SigmaBoolean constructor in Syntax.lean")
+        }
+        SigmaBoolean::SigmaConjecture(SigmaConjecture::Cand(c)) => {
+            let items = c.items.iter().map(sigma_boolean_to_lean).collect::<Result<Vec<_>>>()?;
+            format!("(SigmaBoolean.cand [{}])", items.join(", "))
+        }
+        SigmaBoolean::SigmaConjecture(SigmaConjecture::Cor(c)) => {
+            let items = c.items.iter().map(sigma_boolean_to_lean).collect::<Result<Vec<_>>>()?;
+            format!("(SigmaBoolean.cor [{}])", items.join(", "))
+        }
+        SigmaBoolean::SigmaConjecture(SigmaConjecture::Cthreshold(c)) => {
+            let items = c.children.iter().map(sigma_boolean_to_lean).collect::<Result<Vec<_>>>()?;
+            format!("(SigmaBoolean.cthreshold {} [{}])", c.k, items.join(", "))
+        }
+    })
 }
 
 pub fn stype_to_lean(t: &SType) -> Result<String> {
@@ -130,6 +177,32 @@ fn literal_to_lean(lit: &Literal) -> Result<String> {
         Literal::Long(v) => format!("(Value.vLong {})", fmt_int(*v)),
         Literal::BigInt(v) => format!("(Value.vBigInt {})", fmt_bigint(v)),
         Literal::Coll(ck) => coll_to_lean(ck)?,
+        // Modelled opaquely as its encoded bytes (`Syntax.lean`'s
+        // `Value.vGroupElement`), the same compressed-point encoding
+        // `difftest/src/leanval.rs` already uses for the differential
+        // test's oracle tables (`ScorexSerializable::scorex_serialize_bytes`).
+        // Only reachable from the `--ergotree` route's real constant
+        // values (see `consts_to_lean`) — the EIP-5/`--hex` routes never
+        // inline a `GroupElement` constant, so this is new coverage, not
+        // a behaviour change to either existing route.
+        Literal::GroupElement(g) => {
+            let bytes = g
+                .scorex_serialize_bytes()
+                .context("serializing GroupElement constant to bytes")?;
+            let items: Vec<String> = bytes.iter().map(|b| b.to_string()).collect();
+            format!("(Value.vGroupElement [{}])", items.join(", "))
+        }
+        // `PK("...")`/`sigmaProp(...)` compile to a `SigmaProp` constant,
+        // so this is common in real contracts (unlike `GroupElement`
+        // above) — reachable from both an inline `Expr::Const` (e.g. a
+        // bare `sigmaProp(true)` root, header `0008d3`) and, via
+        // `consts_to_lean`, the `--ergotree` route's real constants (e.g.
+        // `PK("...")`'s `proveDlog`). See `sigma_boolean_to_lean` for the
+        // encoding.
+        Literal::SigmaProp(sp) => {
+            let sb = sigma_boolean_to_lean(sp.value())?;
+            format!("(Value.vSigmaProp {sb})")
+        }
         // `Value.vOption` carries an `elemTpe` (see `Syntax.lean`'s module
         // docstring) that a bare `Literal::Opt` doesn't record; `SType.sAny`
         // is a safe placeholder — `eval`'s `Value.beq` never compares a
@@ -151,11 +224,31 @@ fn literal_to_lean(lit: &Literal) -> Result<String> {
         }
         other => bail!(
             "literal_to_lean: unsupported inline constant literal {other:?} \
-             (GroupElement/SigmaProp/AvlTree/Box constants aren't used inline by \
+             (AvlTree/Box constants aren't used inline by \
              the contracts this exporter has been run against; only via ConstantPlaceholder \
-             — BigInt is supported, see fmt_bigint)"
+             — BigInt, GroupElement and SigmaProp are supported, see fmt_bigint, the \
+             GroupElement case and sigma_boolean_to_lean above)"
         ),
     })
+}
+
+/// Emit a `List Value` Lean literal for an ErgoTree's actual constants (the
+/// `--ergotree` route — see `main.rs`), in `constantIndex` order, which is
+/// also the order `ConstPlaceholder` ids reference. Reuses `literal_to_lean`,
+/// the same Literal→Lean-value emission already used for an inlined
+/// `Expr::Const` — so a constant whose type/value isn't supported there
+/// fails loudly here too, naming the constant's index and type, rather than
+/// emitting an approximation.
+pub fn consts_to_lean(constants: &[Constant]) -> Result<String> {
+    let items = constants
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            literal_to_lean(&c.v)
+                .with_context(|| format!("emitting constant {i} (type {:?})", c.tpe))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(format!("[{}]", items.join(", ")))
 }
 
 fn bin_op_kind_to_lean(k: &BinOpKind) -> Result<String> {

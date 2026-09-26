@@ -1,6 +1,6 @@
 # Convenience targets. Also see README.md.
 
-.PHONY: regen check lean-build cargo-build clippy difftest difftest-gen
+.PHONY: regen check lean-build cargo-build cargo-test clippy difftest difftest-gen
 
 # Rebuild the exporter and regenerate the exported/generated Lean tree
 # files from the EIP-5 template in contracts/.
@@ -14,6 +14,10 @@ regen:
 cargo-build:
 	cd exporter && cargo build
 	cd difftest && cargo build
+
+# `exporter/tests/` (the `--ergotree` full-ErgoTree route's coverage).
+cargo-test:
+	cd exporter && cargo test
 
 lean-build:
 	lake build
@@ -39,7 +43,7 @@ difftest: difftest-gen
 	lake build difftest
 	lake exe difftest
 
-# Full verification: exporter + difftest crate build/clippy-clean, Lean
-# builds (no sorry/errors), and the differential test passes with 0
-# mismatches on the generated cases.
-check: cargo-build clippy lean-build difftest
+# Full verification: exporter + difftest crate build/clippy-clean, the
+# exporter's own test suite green, Lean builds (no sorry/errors), and the
+# differential test passes with 0 mismatches on the generated cases.
+check: cargo-build clippy cargo-test lean-build difftest

@@ -157,7 +157,19 @@ node kinds in a tree without emitting Lean — useful before adding a new
 contract, to see which nodes (if any) still need an `Expr`/`eval` case.
 `exporter --hex <expressionTreeHex> --const-types 07,0e,05` runs on raw
 bytes + constant types instead of an EIP-5 JSON file (for a contract with
-no EIP-5 wrapper).
+no EIP-5 wrapper). `--inventory` works with any input mode.
+
+`exporter --ergotree <ergoTreeHex>` parses a full on-chain ErgoTree
+(header byte, optional size, optional constants segment, expression) —
+what you get from a box's `ergoTree` field or by decoding a P2S address —
+instead of an EIP-5 template. It's mutually exclusive with the positional
+JSON input and with `--hex`/`--const-types`. Besides `def <lean-name> :
+Expr`, it also emits `def <lean-name>Consts : List Value`, the tree's
+actual constant values in `constantIndex` order (the EIP-5/`--hex` routes
+never see real constant values, only types, so they emit no such list).
+Prefix the hex with `@` to read it from a file instead
+(`--ergotree @path/to/tree.hex`, trimmed of surrounding whitespace) —
+ErgoTrees are long enough that this beats a shell argument.
 
 ## Verifying a new contract
 
@@ -167,19 +179,32 @@ trusting any proof.
 
 ### 1. Get the compiled tree
 
-You need the contract's compiled `expressionTree` bytes: either an EIP-5
-template JSON (`{"constTypes": [...], "expressionTree": "..."}`, see
-`contracts/sell-order-eip5.json` — what a compiler typically emits), or
-raw hex + a `constTypes` list, if you only have a box's `ErgoTree` bytes
-from chain (e.g. a box's `script` field from a node's `/utxo` endpoints).
-For raw hex, pass the expression bytes and constant-type bytes with
-`--const-types` (see "Building" above).
+For an on-chain contract, get its full ErgoTree hex and pass it to
+`exporter --ergotree`:
+
+- **From a box**: its `ergoTree` field, from a node's box-lookup
+  endpoints (e.g. `/utxo/byId/{boxId}`) or an explorer API.
+- **From a P2S address**: a node's `GET /script/addressToTree/{address}`
+  returns `{"tree": "<hex>"}` — the address decoded straight to its
+  ErgoTree hex.
+
+Either way you get one hex string covering the header, the constants
+segment (if any) and the expression together — no separate constants
+list to track by hand, and the exporter also emits the tree's actual
+constant values (see "Building" above).
+
+The EIP-5 template route (`{"constTypes": [...], "expressionTree":
+"..."}`, see `contracts/sell-order-eip5.json`) stays the way to export a
+compiler's own output, which is a template with placeholders rather than
+a concrete on-chain instance — it has no real constant values to emit.
+`--hex <expressionTreeHex> --const-types ...` covers the same
+placeholder-only case when there's no EIP-5 wrapper.
 
 ### 2. Check coverage before anything else
 
-Run `exporter --inventory <path-to-eip5.json>` (or `--hex ...
---const-types ...`). It prints the sorted set of distinct MIR node kinds
-the tree contains, no Lean emitted. This repo's `Expr` (`Syntax.lean`)
+Run `exporter --inventory <path-to-eip5.json>` (or `--ergotree ...`, or
+`--hex ... --const-types ...`). It prints the sorted set of distinct MIR
+node kinds the tree contains, no Lean emitted. This repo's `Expr` (`Syntax.lean`)
 only has constructors for the node kinds the contracts covered here
 actually use; anything else is deliberately absent, not approximated —
 the real export step (`exporter <path> --lean-name ... --namespace ...
@@ -205,10 +230,22 @@ evidence isn't trustworthy no matter how right `eval` looks by eye.
   repo as a Lean dependency (see "Difftest library usage" below) and
   export into your own package, e.g.:
   ```
-  exporter <path-to-eip5.json> --lean-name myContractTree \
+  exporter --ergotree @path/to/box-ergotree.hex --lean-name myContractTree \
     --namespace MyPackage.Contracts.MyContract \
     -o MyPackage/Contracts/MyContract/Exported.lean
   ```
+  This also gives you `MyPackage.Contracts.MyContract.myContractTreeConsts
+  : List Value` — the tree's real constant values, in the order
+  `eval`/`spendable` expect. State your property with it directly, no
+  hand-transcribing:
+  ```
+  theorem myContractTree_spendable_iff (ctx : Context) (signers : List PK) :
+      spendable myContractTreeConsts ctx signers myContractTree ↔ ... := by
+    ...
+  ```
+  The EIP-5/`--hex` routes have no real constant values to offer, so a
+  contract exported that way needs its own hand-written `consts` (see
+  `Contracts/SellOrder.lean`'s `consts` for the pattern).
 - **Contributing the contract to this repo**: export under
   `ErgoTreeLean/Contracts/`, following the `sell-order` layout
   (`Contracts/SellOrder.lean` for the hand/theorem-carrying tree,

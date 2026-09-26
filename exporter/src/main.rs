@@ -20,6 +20,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use ergotree_ir::bigint256::BigInt256;
+use ergotree_ir::ergo_tree::ErgoTree;
 use ergotree_ir::mir::constant::{Constant, Literal};
 use ergotree_ir::mir::expr::Expr;
 use ergotree_ir::mir::value::CollKind;
@@ -64,6 +65,16 @@ struct Cli {
     #[arg(long = "const-types")]
     const_types: Option<String>,
 
+    /// Full-ErgoTree mode: parse this hex-encoded ErgoTree (header byte,
+    /// optional size, optional constants segment, expression) instead of
+    /// an EIP-5 template or --hex expression — e.g. a box's `ergoTree`
+    /// bytes from chain. Prefix with `@` to read the hex from a file,
+    /// trimmed of surrounding whitespace (`--ergotree @path/to/tree.hex`)
+    /// — ErgoTrees are long. Mutually exclusive with the positional JSON
+    /// input and with --hex/--const-types.
+    #[arg(long, conflicts_with_all = ["hex", "const_types", "input"])]
+    ergotree: Option<String>,
+
     /// Extra free-text note appended to the generated file's header
     /// docstring (e.g. to record a network-specific baked-in constant a
     /// downstream contract's compiled tree has inlined, which `--hex`
@@ -76,7 +87,20 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let (expr, hex_used) = if let Some(hex_str) = &cli.hex {
+    // Only the tree's constants themselves are collected here — emitting
+    // them to Lean (`emit::consts_to_lean`) is deferred past the
+    // `--inventory` early-return below, so `--inventory` (a coverage
+    // check that emits no Lean at all) never fails on a constant type/
+    // value the emitter doesn't support.
+    let mut ergotree_constants: Option<Vec<Constant>> = None;
+
+    let (expr, hex_used) = if let Some(ergotree_arg) = &cli.ergotree {
+        let hex_str = read_hex_arg(ergotree_arg)
+            .with_context(|| format!("reading --ergotree input {ergotree_arg:?}"))?;
+        let (expr, constants) = parse_full_ergotree(&hex_str)?;
+        ergotree_constants = Some(constants);
+        (expr, hex_str)
+    } else if let Some(hex_str) = &cli.hex {
         let const_types_str = cli
             .const_types
             .as_ref()
@@ -109,6 +133,14 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Emitting the tree's real constants (the `--ergotree` route only) is
+    // done past the `--inventory` early-return above — see
+    // `ergotree_constants`'s doc comment.
+    let consts_lean = match &ergotree_constants {
+        Some(constants) => Some(emit::consts_to_lean(constants)?),
+        None => None,
+    };
+
     let lean_name = cli
         .lean_name
         .ok_or_else(|| anyhow!("--lean-name is required unless --inventory is passed"))?;
@@ -122,21 +154,49 @@ fn main() -> Result<()> {
         None => String::new(),
     };
 
-    let out = format!(
-        "/-\n\
-         GENERATED FILE. Do not hand-edit.\n\n\
-         Produced by the Rust exporter (`exporter/`) from the EIP-5\n\
-         `expressionTree` bytes:\n\n  {hex_used}\n{extra_doc_block}\n\
-         Regenerate with:\n\n\
-         \x20 cd exporter && cargo run --release -- <path-to-eip5.json> \\\n\
-         \x20     --lean-name {lean_name} --namespace {namespace} -o <output path>\n\
-         -/\n\
-         import ErgoTreeLean.Syntax\n\n\
-         namespace {namespace}\n\n\
-         open ErgoTreeLean\n\n\
-         def {lean_name} : Expr :=\n{body}\n\n\
-         end {namespace}\n"
-    );
+    // The `--ergotree` route gets its own header wording (it parses a full
+    // on-chain tree, not an EIP-5 `expressionTree`) and an extra
+    // `<lean_name>Consts` definition holding the tree's real constant
+    // values. The EIP-5/`--hex` routes below are untouched from before this
+    // flag existed — `make regen`'s `git diff -- ErgoTreeLean/` must stay
+    // empty.
+    let out = if cli.ergotree.is_some() {
+        let consts_def = match &consts_lean {
+            Some(list) => format!("\n\ndef {lean_name}Consts : List Value := {list}"),
+            None => String::new(),
+        };
+        format!(
+            "/-\n\
+             GENERATED FILE. Do not hand-edit.\n\n\
+             Produced by the Rust exporter (`exporter/`) from the full\n\
+             on-chain ErgoTree bytes (header + constants + expression):\n\n  {hex_used}\n{extra_doc_block}\n\
+             Regenerate with:\n\n\
+             \x20 cd exporter && cargo run --release -- --ergotree <hex-or-@file> \\\n\
+             \x20     --lean-name {lean_name} --namespace {namespace} -o <output path>\n\
+             -/\n\
+             import ErgoTreeLean.Syntax\n\n\
+             namespace {namespace}\n\n\
+             open ErgoTreeLean\n\n\
+             def {lean_name} : Expr :=\n{body}{consts_def}\n\n\
+             end {namespace}\n"
+        )
+    } else {
+        format!(
+            "/-\n\
+             GENERATED FILE. Do not hand-edit.\n\n\
+             Produced by the Rust exporter (`exporter/`) from the EIP-5\n\
+             `expressionTree` bytes:\n\n  {hex_used}\n{extra_doc_block}\n\
+             Regenerate with:\n\n\
+             \x20 cd exporter && cargo run --release -- <path-to-eip5.json> \\\n\
+             \x20     --lean-name {lean_name} --namespace {namespace} -o <output path>\n\
+             -/\n\
+             import ErgoTreeLean.Syntax\n\n\
+             namespace {namespace}\n\n\
+             open ErgoTreeLean\n\n\
+             def {lean_name} : Expr :=\n{body}\n\n\
+             end {namespace}\n"
+        )
+    };
 
     match cli.output {
         Some(path) => {
@@ -150,6 +210,35 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Parse raw expression-tree bytes under a constant store built from
+/// `constants` (in `constantIndex` order, matching `ConstPlaceholder` ids).
+/// Returns the parsed `Expr` with `ConstPlaceholder` nodes intact (never
+/// substituted) — shared by the EIP-5/`--hex` route (dummy constant
+/// values, only the types matter — see `dummy_literal`) and the
+/// `--ergotree` route (real constant values). `ConstantPlaceholder`
+/// parsing only ever reads a constant's `tpe` from the store (see
+/// `ergotree-ir`'s `constant_placeholder.rs`), so which of the two this is
+/// given never changes the emitted `Expr` shape.
+fn parse_expr_bytes(tree_bytes: &[u8], constants: &[Constant]) -> Result<Expr> {
+    let mut r = SigmaByteReader::new(Cursor::new(tree_bytes), ConstantStore::new(constants.to_vec()));
+    // `SigmaByteReader::new` defaults `substitute_placeholders` to `false`
+    // — see module docstring.
+    let expr = Expr::sigma_parse(&mut r).context("parsing expressionTree bytes as an Expr")?;
+
+    // Confirm every byte was consumed, mirroring `parseExprHex`'s
+    // "no leftover bytes" check on the Lean side.
+    let mut rest = Vec::new();
+    std::io::Read::read_to_end(&mut r, &mut rest).ok();
+    if !rest.is_empty() {
+        bail!(
+            "{} leftover byte(s) after parsing expressionTree (parser stopped early)",
+            rest.len()
+        );
+    }
+
+    Ok(expr)
 }
 
 /// Parse a raw hex-encoded `expressionTree` under a dummy constant store
@@ -170,23 +259,57 @@ fn parse_expression_tree(hex_str: &str, const_type_codes: &[String]) -> Result<E
     }
 
     let tree_bytes = hex::decode(hex_str).context("decoding expressionTree as hex")?;
-    let mut r = SigmaByteReader::new(Cursor::new(&tree_bytes[..]), ConstantStore::new(constants));
-    // `SigmaByteReader::new` defaults `substitute_placeholders` to `false`
-    // — see module docstring.
-    let expr = Expr::sigma_parse(&mut r).context("parsing expressionTree bytes as an Expr")?;
+    parse_expr_bytes(&tree_bytes, &constants)
+}
 
-    // Confirm every byte was consumed, mirroring `parseExprHex`'s
-    // "no leftover bytes" check on the Lean side.
-    let mut rest = Vec::new();
-    std::io::Read::read_to_end(&mut r, &mut rest).ok();
-    if !rest.is_empty() {
-        bail!(
-            "{} leftover byte(s) after parsing expressionTree (parser stopped early)",
-            rest.len()
-        );
+/// Resolve a `--ergotree` argument: `@path` reads the ErgoTree hex from a
+/// file (trimmed of surrounding whitespace — ErgoTrees are long enough
+/// that a file beats a shell argument); anything else is taken as literal
+/// hex text (also trimmed).
+fn read_hex_arg(arg: &str) -> Result<String> {
+    if let Some(path) = arg.strip_prefix('@') {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("reading ErgoTree hex from file {path}"))?;
+        Ok(text.trim().to_string())
+    } else {
+        Ok(arg.trim().to_string())
+    }
+}
+
+/// Parse a full on-chain ErgoTree — header byte, optional size, optional
+/// constants segment, expression — with `ergotree-ir`'s own `ErgoTree`
+/// parser (`ErgoTree::sigma_parse_bytes`). Returns the parsed `Expr` (with
+/// `ConstPlaceholder` nodes intact for a constant-segregated tree, or none
+/// at all for a non-segregated one — either way built by
+/// `parse_expr_bytes` from the tree's own constants, which is a no-op
+/// list for a non-segregated tree) alongside those constants themselves,
+/// in `constantIndex` order, for `emit::consts_to_lean` to emit their real
+/// values.
+///
+/// `ErgoTree::sigma_parse_bytes` itself only fails on a raw I/O error —
+/// header/version/constants/expression parsing problems are all reported
+/// by returning `ErgoTree::Unparsed { error, .. }` instead of an `Err`
+/// (see `ergotree-ir`'s `ergo_tree.rs`), so that variant is where an
+/// unsupported header (e.g. a language version this parser doesn't know)
+/// or malformed tree is caught and turned into a clear error here.
+fn parse_full_ergotree(hex_str: &str) -> Result<(Expr, Vec<Constant>)> {
+    let bytes = hex::decode(hex_str).context("decoding --ergotree input as hex")?;
+    let header_byte = *bytes.first().ok_or_else(|| anyhow!("--ergotree input is empty"))?;
+    let tree = ErgoTree::sigma_parse_bytes(&bytes).context("parsing ErgoTree bytes")?;
+    if let ErgoTree::Unparsed { error, .. } = &tree {
+        bail!("unsupported or malformed ErgoTree (header byte {header_byte:#04x}): {error}");
     }
 
-    Ok(expr)
+    let constants = tree
+        .get_constants()
+        .map_err(|e| anyhow!("reading ErgoTree constants: {e}"))?;
+    let template = tree
+        .template_bytes()
+        .map_err(|e| anyhow!("reading ErgoTree template (expression) bytes: {e}"))?;
+    let expr = parse_expr_bytes(&template, &constants)
+        .context("parsing ErgoTree template bytes as an Expr")?;
+
+    Ok((expr, constants))
 }
 
 /// Build an arbitrary, never-inlined placeholder value of type `tpe`, used

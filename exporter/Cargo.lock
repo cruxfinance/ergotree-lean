@@ -493,6 +493,7 @@ dependencies = [
  "hex",
  "serde",
  "serde_json",
+ "sigma-ser",
 ]
 
 [[package]]
