@@ -950,6 +950,42 @@ theorem sameKind_tele {A B : Value → Prop} {P : NumKind → Int → Int → Pr
   · rintro ⟨v, k, p, tk, z, hv, rfl, ht, hz, hw⟩; exact ⟨tk, ht, k, p, hv, z, hz, hw⟩
   · rintro ⟨tk, ht, k, p, hv, z, hz, hw⟩; exact ⟨_, k, p, tk, z, hv, rfl, ht, hz, hw⟩
 
+/-! ## Oracle nodes -/
+
+/-- `blake2b256`: the operand's bytes, hashed by the context's oracle. -/
+@[eval_inv] theorem eval_calcBlake2b256_ok (e : Expr) (w : Value) :
+    eval c x env (.calcBlake2b256 e) = .ok w ↔
+      ∃ vs bs, eval c x env e = .ok (.vColl .sByte vs) ∧ vsToBytes vs = .ok bs ∧
+        bytesToVColl (x.oracle.blake2b256 bs) = w := by
+  simp only [eval]
+  cases h : eval c x env e with
+  | error => simp [bind, Except.bind]
+  | ok v =>
+    simp only [bind, Except.bind]
+    cases v <;> simp
+    rename_i t vs
+    cases t <;> simp
+    cases hb : vsToBytes vs <;> simp [pure, Except.pure]
+
+/-- `DeserializeContext`: the context variable's bytes, deserialized and
+    evaluated by the context's oracle, with the expected type. -/
+@[eval_inv] theorem eval_deserializeContext_ok (i : Nat) (t : SType) (w : Value) :
+    eval c x env (.deserializeContext i t) = .ok w ↔
+      ∃ vs bs, x.getVar i = some (.vColl .sByte vs) ∧ vsToBytes vs = .ok bs ∧
+        x.oracle.deserialize bs = some w ∧ SType.beq (typeOf w) t = true := by
+  simp only [eval]
+  cases h : x.getVar i with
+  | none => simp
+  | some v =>
+    simp only
+    cases v <;> simp
+    rename_i τ vs
+    cases τ <;> simp
+    cases hb : vsToBytes vs <;> simp [bind, Except.bind]
+    rename_i bs
+    cases hd : x.oracle.deserialize bs <;> simp
+    split <;> simp_all [pure, Except.pure] <;> (rintro rfl; assumption)
+
 /-! ## Orientation fixes -/
 
 @[eval_inv] theorem some_eq_register_iff (v : Value) (b : Box) (r : Int) :

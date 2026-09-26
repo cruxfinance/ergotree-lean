@@ -4,6 +4,7 @@ import ErgoTreeLean.Context
 import ErgoTreeLean.Eval
 import ErgoTreeLean.InlineFuns
 import ErgoTreeLean.Sigma
+import ErgoTreeLean.Tx
 import ErgoTreeLean.Deserialize
 import ErgoTreeLean.Contracts.SellOrder
 import ErgoTreeLean.Contracts.SellOrder.Exported
