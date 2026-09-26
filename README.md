@@ -253,13 +253,14 @@ difftest library stay Mathlib-free).
   nothing changes:
   1. `simp` with the `eval_inv` rules, only on hypotheses whose statement
      is not yet in normal form (a statement already simplified, or a part
-     of one, is never simplified again), split `∧`/`∃` hypotheses, and
-     merge two reads `e = some a`, `e = some b` into `a = b`, all in one
-     new goal per round;
+     of one, is never simplified again unless a new rule can rewrite it),
+     split `∧`/`∃` hypotheses, and merge two reads `e = some a`,
+     `e = some b` (or `e = .ok a`, `e = .ok b`) into `a = b`;
   2. turn every variable definition `x = t` into a rewrite rule for `x`
      (instead of `subst`); of two variables the one the engine introduced
      is rewritten, so a name given with `obtain ⟨out, h⟩ : ∃ out, … :=
-     ⟨_, ‹_›⟩` replaces an anonymous variable on the next `eval_sym`;
+     ⟨_, ‹_›⟩` replaces an anonymous variable on the next `eval_sym` (loop
+     facts are rewritten with these definitions too, and nothing else);
   3. when stuck, split the goal on an `if` whose condition is undecided and
      keep the condition as a rewrite rule for that branch, so every later
      `if` on the same condition loses its dead arm without being looked at;
@@ -267,10 +268,21 @@ difftest library stay Mathlib-free).
      block runs one definition at a time and each continuation is
      simplified once, with the definitions before it decoded.
 
+  The goal is not changed while the engine runs: derived facts live in a
+  local context of the engine's own, each with its proof term, and the
+  proof is assembled once at the end, in one pass over the term
+  (`(fun h => …) pf` substituted for a fact, `Exists.elim` for an
+  existential, `Or.elim` at a split). The ordering, arithmetic and cast
+  rules bind each operand's kind and payload right where its equation fixes
+  it (`∃ k p, eval l = .ok (k.wrap p) ∧ ∃ q, …`), so `simp` drops each
+  existential as soon as it is decided.
+
   What remains is facts about the context (`ctx.outputs[k]? = some out`,
   `out.register 5 = some (.vColl τ vs)`, `vs[0]? = some (.vLong n)`, `Int`
   equations and bounds), disjunctions for `||`, and loop facts
-  (`forallHelper … = .ok true` etc., left folded). `eval_sym [lemmas]`
+  (`forallHelper … = .ok true` etc., and any `∀`-statement about `eval`,
+  such as `mapHelper_getElem?`'s pointwise fact, left folded: instantiate
+  one at an element and run `eval_sym` on the result). `eval_sym [lemmas]`
   adds rewrite rules: local hypotheses (tracked by name as the engine
   rewrites them), or a loop lemma such as `forallHelper_true_iff`, which
   makes `eval_sym` expand loops under their binders. `clear_loops` drops
@@ -281,13 +293,20 @@ difftest library stay Mathlib-free).
   Example: `Contracts/SellOrder/EvalSym.lean` re-proves two `sell-order`
   theorems in a few lines each. On a larger downstream contract (a
   20-definition loop body with value-producing `if`s and `BigInt`
-  arithmetic), a per-input safety theorem checks in under a minute.
+  arithmetic), a per-input safety theorem checks in about 30 s, and one
+  that executes three further loops (two `map`s, a `fold` inside a
+  `forall`, an `exists`) in about 30 s.
 
-**Known limits.** About half of the check time of a large proof is the
-elaborator instantiating the proof term: each round's new goal is a delayed
-assignment, and instantiating a chain of them is quadratic in the number
-of rounds. Running the engine in continuation-passing style with a single
-final goal would remove that. `Value`/`SigmaBoolean` have no `LawfulBEq`
+- `Tx.lean` (core model, no Mathlib): a transaction (`Tx`: inputs, data
+  inputs, outputs, height, and each input's context extension and oracle),
+  `Tx.ctxAt tx i`, input `i`'s evaluation context, and `Tx.Valid`: distinct
+  input ids and every input spendable in its own context, with the parsing
+  of script bytes into trees passed in as a function. For statements that
+  span several inputs of one transaction.
+
+**Known limits.** Most of the check time of a large proof is now `simp`
+itself; the largest single call is a long `&&` chain in one step (a few
+seconds). `Value`/`SigmaBoolean` have no `LawfulBEq`
 instance (it would be false for `vOption`). There are no rules that push a
 *goal* into a loop shape (liveness direction).
 
@@ -312,6 +331,7 @@ instance (it would be false for `vOption`). There are no rules that push a
 
 ```
 ErgoTreeLean/            core model, proof tooling, sell-order example
+  Tx.lean                  transaction model: per-input contexts, validity
   Contracts/SellOrder*    the sell-order example contract
   Lemmas/, Tactics/        eval_sym proof automation (imports Mathlib)
   DiffTest/                difftest library (Types/Decode/Runner) + this repo's Main
