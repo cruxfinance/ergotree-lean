@@ -41,6 +41,7 @@ use on a goal or under binders.
 -/
 import ErgoTreeLean.Lemmas.EvalHolds
 import ErgoTreeLean.Lemmas.Decode
+import ErgoTreeLean.Lemmas.Loops
 
 namespace ErgoTreeLean
 
@@ -129,47 +130,49 @@ long chain of those at the end costs more than the whole symbolic execution. -/
     become locals (`binders`, instantiated by `args`); `k` builds the rest of
     the proof with all of them in scope. `doneIdx`: binders that are leaves of a
     statement in normal form (and hence in normal form themselves). -/
-partial def decompose (target : Expr) (propTarget : Bool) (pf ty : Expr) (isDone : Bool)
+partial def decompose (target : Expr) (propTarget : Bool) (pf ty : Expr) (isDone : Bool) (name? : Option Name)
     (binders args : Array Expr) (doneIdx : Array Nat)
     (k : Array Expr → Array Expr → Array Nat → MetaM Expr) : MetaM Expr := do
   if ty.isAppOfArity ``And 2 then
     let a := ty.appFn!.appArg!
     let b := ty.appArg!
-    decompose target propTarget (mkApp3 (mkConst ``And.left) a b pf) a isDone binders args doneIdx fun bs as ds =>
-      decompose target propTarget (mkApp3 (mkConst ``And.right) a b pf) b isDone bs as ds k
+    decompose target propTarget (mkApp3 (mkConst ``And.left) a b pf) a isDone none binders args doneIdx
+      fun bs as ds =>
+        decompose target propTarget (mkApp3 (mkConst ``And.right) a b pf) b isDone none bs as ds k
   else if propTarget && ty.isAppOfArity ``Exists 2 then
     let α := ty.appFn!.appArg!
     let p := ty.appArg!
     let u ← getLevel α
     let n := match p with | .lam n .. => n | _ => `w
-    withLocalDeclD n α fun w => do
+    withLocalDeclD (← mkFreshUserName n) α fun w => do
       let bodyTy := p.beta #[w]
       withLocalDeclD `h bodyTy fun hw => do
-        let body ← decompose target propTarget hw bodyTy isDone (binders.push w) (args.push w) doneIdx k
+        let body ← decompose target propTarget hw bodyTy isDone none (binders.push w) (args.push w) doneIdx k
         return mkApp5 (mkConst ``Exists.elim [u]) α p target pf (← mkLambdaFVars #[w, hw] body)
   else
-    withLocalDeclD `h ty fun x =>
+    withLocalDeclD (← name?.getDM (mkFreshUserName `h)) ty fun x =>
       k (binders.push x) (args.push pf) (if isDone then doneIdx.push binders.size else doneIdx)
 
-/-- Split every `∧`/`∃` hypothesis into its leaves, in one new goal. -/
-def splitAll (g : MVarId) (st : State) : MetaM (MVarId × State × Bool) := g.withContext do
+/-- A new fact: its proof, its statement, whether the statement is known to be
+    in normal form, and the user name to keep (a rewritten hypothesis keeps its
+    name, which rules are looked up by). -/
+abbrev Fact := Expr × Expr × Bool × Option Name
+
+/-- Replace the hypotheses `drop` by `facts`, split into their `∧`/`∃`
+    leaves, in one new goal. -/
+def introduce (g : MVarId) (st : State) (facts : Array Fact) (drop : Array FVarId) :
+    MetaM (MVarId × State) := g.withContext do
+  if facts.isEmpty then return (← g.tryClearMany drop, st)
   let target ← instantiateMVars (← g.getType)
   let propTarget ← isProp target
-  let mut todo : Array (FVarId × Expr × Bool) := #[]
-  for d in ← getLCtx do
-    if d.isImplementationDetail then continue
-    let t ← instantiateMVars d.type
-    if t.isAppOfArity ``And 2 || (propTarget && t.isAppOfArity ``Exists 2) then
-      todo := todo.push (d.fvarId, t, st.done.contains t)
-  if todo.isEmpty then return (g, st, false)
   let lctx ← getLCtx
   let linsts ← getLocalInstances
   let tag ← g.getTag
   let newGoal ← IO.mkRef (none : Option (MVarId × Array Nat × Nat))
   let rec go (j : Nat) (bs as : Array Expr) (ds : Array Nat) : MetaM Expr := do
-    if h : j < todo.size then
-      let (fv, t, isDone) := todo[j]
-      decompose target propTarget (mkFVar fv) t isDone bs as ds (go (j + 1))
+    if h : j < facts.size then
+      let (pf, t, isDone, name?) := facts[j]
+      decompose target propTarget pf t isDone name? bs as ds (go (j + 1))
     else
       -- The new goal lives in the old context and takes the new locals as
       -- arguments, so building the proof needs no delayed assignment.
@@ -179,16 +182,15 @@ def splitAll (g : MVarId) (st : State) : MetaM (MVarId × State × Bool) := g.wi
       return mkAppN G as
   let pf ← go 0 #[] #[] #[]
   g.assign pf
-  let some (G, ds, n) ← newGoal.get | throwError "eval_sym: split failed"
-  let (fvs, G) ← G.introN n
-  let G ← G.tryClearMany (todo.map (·.1))
+  let some (G, ds, n) ← newGoal.get | throwError "eval_sym: introduce failed"
+  let (fvs, G) ← G.introNP n
+  let G ← G.tryClearMany drop
   let st ← G.withContext do
     let mut done := st.done
     for i in ds do
       done := done.insert (← instantiateMVars (← fvs[i]!.getDecl).type)
     return { st with done }
-  trace[eval_sym] "split {todo.size} hypotheses into {n}"
-  return (G, st, true)
+  return (G, st)
 
 /-- Register new variable definitions `x = t` / `t = x` (`x` a local, not in
     `t`) as rewrite rules. Rules stay acyclic: `t` must not mention a defined
@@ -231,80 +233,71 @@ def addDefinitions (g : MVarId) (st : State) : MetaM (State × Bool) := g.withCo
     progress := true
   return (st, progress)
 
-/-- For hypotheses `e = some a` and `e = some b` (e.g. a register read twice),
-    replace the second by `some a = some b`; drop duplicate hypotheses. -/
-def mergeSomeEqs (g : MVarId) (st : State) : MetaM (MVarId × Bool) := g.withContext do
-  let mut seen : Std.HashMap Expr (Expr × Expr) := {}
-  let mut toAssert := #[]
-  let mut toClear := #[]
-  let mut types : Std.HashSet Expr := {}
-  for d in ← getLCtx do
-    if d.isImplementationDetail then continue
-    let t ← instantiateMVars d.type
-    -- A second copy of a proposition is dropped.
-    if types.contains t && !st.rules.any (·.1 == d.userName) && (← isProp t) then
-      toClear := toClear.push d.fvarId; continue
-    types := types.insert t
-    let some (_, l, r) := t.eq? | continue
-    unless r.isAppOfArity ``Option.some 2 do continue
-    match seen[l]? with
-    | none => seen := seen.insert l (d.toExpr, r)
-    | some (h1, r1) =>
-      toClear := toClear.push d.fvarId
-      unless r1 == r do
-        let pf ← mkEqTrans (← mkEqSymm h1) d.toExpr
-        toAssert := toAssert.push { userName := ← mkFreshUserName `h, type := ← inferType pf, value := pf }
-  if toClear.isEmpty then return (g, false)
-  let (_, g) ← g.assertHypotheses toAssert
-  return (← g.tryClearMany toClear, true)
-
-/-- `simp` every hypothesis whose statement is not yet in normal form, with the
-    rules as extra rewrite rules. Returns `none` if a hypothesis became `False`
-    (goal closed). -/
-def simpNew (cfg : Cfg) (g : MVarId) (st : State) : MetaM (Option (MVarId × State) × Bool) := g.withContext do
+/-- One round's changes, without touching the goal: every hypothesis whose
+    statement is not in normal form is simplified (with the rules as extra
+    rewrite rules), every `∧`/`∃` hypothesis is split, a second copy of a
+    proposition is dropped, and of two hypotheses `e = some a`, `e = some b`
+    (e.g. a register read twice) the second becomes `some a = some b`.
+    Returns `none` if a hypothesis became `False` (goal closed). -/
+def collect (cfg : Cfg) (g : MVarId) (st : State) : MetaM (Option (Array Fact × Array FVarId × State)) :=
+    g.withContext do
   let lctx ← getLCtx
+  let target ← instantiateMVars (← g.getType)
+  let propTarget ← isProp target
   let mut ctx := cfg.ctx
   for (n, flip) in st.rules do
     if let some d := lctx.findFromUserName? n then
       let pf ← if flip then mkEqSymm d.toExpr else pure d.toExpr
       ctx := ctx.setSimpTheorems (← ctx.simpTheorems.addTheorem (.fvar d.fvarId) pf)
   let mut st := st
-  let mut toAssert := #[]
-  let mut toClear := #[]
-  let mut progress := false
+  let mut facts : Array Fact := #[]
+  let mut drop := #[]
+  let mut types : Std.HashSet Expr := {}
+  let mut seen : Std.HashMap Expr (Expr × Expr) := {}
   for d in lctx do
     if d.isImplementationDetail then continue
     let t ← instantiateMVars d.type
-    if st.done.contains t then continue
     unless ← isProp t do continue
-    if !cfg.loops && isLoopFact t then continue
-    let ctx' := ctx.setSimpTheorems (ctx.simpTheorems.eraseTheorem (.fvar d.fvarId))
-    let t0 ← IO.monoMsNow
-    let (r, _) ← simp t ctx' cfg.simprocs none
-    let dt := (← IO.monoMsNow) - t0
-    trace[eval_sym] "simp {dt}ms: {t.approxDepth} {if r.expr == t then "(normal)" else ""}"
-    if dt > 5000 then trace[eval_sym] "slow: {t}"
-    if r.expr.isFalse then
-      let pf ← match r.proof? with
-        | some p => mkEqMP p d.toExpr
-        | none => pure d.toExpr
-      g.assign (← mkFalseElim (← g.getType) pf)
-      return (none, true)
-    if r.expr == t then
-      st := { st with done := st.done.insert t }
+    let isRule := st.rules.any (·.1 == d.userName)
+    if types.contains t && !isRule then drop := drop.push d.fvarId; continue
+    types := types.insert t
+    if t.isAppOfArity ``And 2 || (propTarget && t.isAppOfArity ``Exists 2) then
+      facts := facts.push (d.toExpr, t, st.done.contains t, none)
+      drop := drop.push d.fvarId
       continue
-    progress := true
-    toClear := toClear.push d.fvarId
-    if r.expr.isTrue then continue
-    let value ← match r.proof? with
-      | some p => mkEqMP p d.toExpr
-      | none => mkExpectedTypeHint d.toExpr r.expr
-    toAssert := toAssert.push { userName := d.userName, type := r.expr, value }
-    st := { st with done := st.done.insert r.expr }
-  if !progress then return (some (g, st), false)
-  let (_, g) ← g.assertHypotheses toAssert
-  let g ← g.tryClearMany toClear
-  return (some (g, st), progress)
+    if !st.done.contains t && (cfg.loops || !isLoopFact t) then
+      let ctx' := ctx.setSimpTheorems (ctx.simpTheorems.eraseTheorem (.fvar d.fvarId))
+      let t0 ← IO.monoMsNow
+      let (r, _) ← simp t ctx' cfg.simprocs none
+      let dt := (← IO.monoMsNow) - t0
+      trace[eval_sym] "simp {dt}ms: {t.approxDepth} {if r.expr == t then "(normal)" else ""}"
+      if r.expr.isFalse then
+        let pf ← match r.proof? with
+          | some p => mkEqMP p d.toExpr
+          | none => pure d.toExpr
+        g.assign (← mkFalseElim target pf)
+        return none
+      if r.expr != t then
+        drop := drop.push d.fvarId
+        unless r.expr.isTrue do
+          let pf ← match r.proof? with
+            | some p => mkEqMP p d.toExpr
+            | none => mkExpectedTypeHint d.toExpr r.expr
+          facts := facts.push (pf, r.expr, true, some d.userName)
+        continue
+      st := { st with done := st.done.insert t }
+    -- `t` stays: look for a second read of the same `e = some _`.
+    let some (_, l, rhs) := t.eq? | continue
+    unless rhs.isAppOfArity ``Option.some 2 do continue
+    match seen[l]? with
+    | none => seen := seen.insert l (d.toExpr, rhs)
+    | some (h1, r1) =>
+      if isRule then continue
+      drop := drop.push d.fvarId
+      unless r1 == rhs do
+        let pf ← mkEqTrans (← mkEqSymm h1) d.toExpr
+        facts := facts.push (pf, ← inferType pf, false, none)
+  return some (facts, drop, st)
 
 /-- Release every top-level `Later` hypothesis. -/
 def releaseTop (g : MVarId) : MetaM (MVarId × Bool) := g.withContext do
@@ -398,13 +391,12 @@ def closeFalse (g : MVarId) : MetaM Bool := g.withContext do
 
 /-- The `eval_sym` loop on one goal. -/
 partial def run (cfg : Cfg) (g : MVarId) (st : State) : MetaM (List MVarId) := do
-  let (g, st, _) ← splitAll g st
   if ← closeFalse g then return []
   let (st, _) ← addDefinitions g st
-  let (g, _) ← mergeSomeEqs g st
-  let (r, progress) ← simpNew cfg g st
-  let some (g, st) := r | return []
-  if progress then return ← run cfg g st
+  let some (facts, drop, st) ← collect cfg g st | return []
+  if !facts.isEmpty || !drop.isEmpty then
+    let (g, st) ← introduce g st facts drop
+    return ← run cfg g st
   -- An undecided `if` is split before its continuation is released, so the
   -- continuation sees the branch's value and condition.
   if let some fv ← findBranch g then
