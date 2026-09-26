@@ -20,7 +20,8 @@ and bounds, …), `∀`-statements for collection loops, and disjunctions for `|
 3. merge two hypotheses `e = some a`, `e = some b` into `a = b`;
 4. `simp` with the `eval_inv` rules, but only the hypotheses whose statement is
    new. A statement `simp` has already normalized, or a part of one, is never
-   simplified again, so the cost of a round is proportional to what changed;
+   simplified again (unless a new rule can rewrite it), so the cost of a round
+   is proportional to what changed;
 5. when nothing else applies, split the goal on an `if` whose condition is
    undecided (a disjunction with a `Later` branch) and keep the branch
    condition as a rewrite rule for the rest of that branch, so every later
@@ -30,11 +31,19 @@ and bounds, …), `∀`-statements for collection loops, and disjunctions for `|
    continuation is simplified once, with the definitions before it (and the
    branch taken by any `if` among them) already decoded.
 
-Loop facts (`forallHelper … = .ok b` and the other `*Helper`s) carry a whole
-loop body and are left alone unless an extra lemma about a loop helper is
-given (`eval_sym [forallHelper_true_iff]` expands `forall` loops under their
-binders; `Later`s under a binder are released by re-simplifying that
-hypothesis).
+Loop facts (`forallHelper … = .ok b` and the other `*Helper`s, and any
+`∀`-statement about `eval`, such as the pointwise fact `mapHelper_getElem?`
+gives) carry a whole loop body and are left alone unless an extra lemma about a
+loop helper is given (`eval_sym [forallHelper_true_iff]` expands `forall` loops
+under their binders; `Later`s under a binder are released by re-simplifying
+that hypothesis). To execute one iteration, instantiate the loop fact at an
+element first and run `eval_sym` on the resulting `eval … = .ok r`: under a
+binder no `if` can be split, so a body executed there is re-simplified whole on
+every round.
+
+The goal is not changed while the engine runs: the derived facts live in a
+local context of the engine's own, each with its proof term, and the proof is
+assembled once at the end (see "The proof under construction" below).
 
 `eval_simp` is one plain `simp` round with every `Later` released at once, for
 use on a goal or under binders.
@@ -90,7 +99,7 @@ open Lean Elab Tactic Meta
 
 initialize registerTraceClass `eval_sym
 
-/-- Per-goal engine state. -/
+/-- Per-branch engine state. -/
 structure State where
   /-- Statements already in `simp` normal form under the current rules. -/
   done : Std.HashSet Expr := {}
@@ -108,13 +117,22 @@ structure State where
 structure Cfg where
   ctx : Simp.Context
   simprocs : Simp.SimprocsArray
-  /-- Also simplify loop-helper facts. -/
+  /-- Also simplify loop facts. -/
   loops : Bool
+  /-- The locals of the goal `eval_sym` started on. -/
+  root : Std.HashSet FVarId
+  /-- The goal is a proposition (only then are `∃`s and `∨`s eliminated). -/
+  propTarget : Bool
 
+/-- A loop fact: a loop helper's success (`forallHelper … = .ok b` and the
+    other `*Helper`s), or a `∀`-statement about `eval` (a loop body under its
+    binder, e.g. the pointwise statement `mapHelper_getElem?` gives). Both are
+    only simplified when a loop lemma is given: under a binder no `if` can be
+    split, so executing a body there repeats the whole block on every round. -/
 def isLoopFact (t : Expr) : Bool :=
   match t.eq? with
   | some (_, lhs, _) => ErgoTreeLean.loopHelpers.any (lhs.isAppOf ·)
-  | none => false
+  | none => t.isForall && (t.find? (·.isAppOf ``ErgoTreeLean.eval)).isSome
 
 def containsLater (t : Expr) : Bool := (t.find? (·.isAppOf ``ErgoTreeLean.Later)).isSome
 
@@ -122,75 +140,124 @@ def containsLater (t : Expr) : Bool := (t.find? (·.isAppOf ``ErgoTreeLean.Later
 partial def releaseAll (t : Expr) : Expr :=
   t.replace fun e => if e.isAppOfArity ``ErgoTreeLean.Later 1 then some (releaseAll e.appArg!) else none
 
-/-! Every step below changes the goal at most once per round: each new goal
-built by `intro`/`assert` becomes a delayed assignment, and instantiating a
-long chain of those at the end costs more than the whole symbolic execution. -/
+/-! ## The proof under construction
 
-/-- Decompose the proof `pf : ty` into its `∧`/`∃` leaves. Witnesses and leaves
-    become locals (`binders`, instantiated by `args`); `k` builds the rest of
-    the proof with all of them in scope. `doneIdx`: binders that are leaves of a
-    statement in normal form (and hence in normal form themselves). -/
-partial def decompose (target : Expr) (propTarget : Bool) (pf ty : Expr) (isDone : Bool) (name? : Option Name)
-    (binders args : Array Expr) (doneIdx : Array Nat)
-    (k : Array Expr → Array Expr → Array Nat → MetaM Expr) : MetaM Expr := do
-  if ty.isAppOfArity ``And 2 then
-    let a := ty.appFn!.appArg!
-    let b := ty.appArg!
-    decompose target propTarget (mkApp3 (mkConst ``And.left) a b pf) a isDone none binders args doneIdx
-      fun bs as ds =>
-        decompose target propTarget (mkApp3 (mkConst ``And.right) a b pf) b isDone none bs as ds k
-  else if propTarget && ty.isAppOfArity ``Exists 2 then
-    let α := ty.appFn!.appArg!
-    let p := ty.appArg!
-    let u ← getLevel α
-    let n := match p with | .lam n .. => n | _ => `w
-    withLocalDeclD (← mkFreshUserName n) α fun w => do
-      let bodyTy := p.beta #[w]
-      withLocalDeclD `h bodyTy fun hw => do
-        let body ← decompose target propTarget hw bodyTy isDone none (binders.push w) (args.push w) doneIdx k
-        return mkApp5 (mkConst ``Exists.elim [u]) α p target pf (← mkLambdaFVars #[w, hw] body)
-  else
-    withLocalDeclD (← name?.getDM (mkFreshUserName `h)) ty fun x =>
-      k (binders.push x) (args.push pf) (if isDone then doneIdx.push binders.size else doneIdx)
+The engine never changes the goal while it runs. It extends a local context
+with the facts it derives (a `Tele`), recording how each new local is proved;
+hypotheses the engine has rewritten are dropped from that context but stay in
+the record. When the run ends, the remaining goal is created once, and the
+proof is assembled in one pass: `(fun h => …) pf` for a fact,
+`Exists.elim pf (fun w hw => …)` for an existential. A split on an `if` ends
+the telescope with an `Or.elim` whose two branches are telescopes of their own.
+
+Changing the goal every round instead (as `intro`/`clear` do) makes every round
+a delayed assignment, and instantiating a chain of those at the end is
+quadratic in the number of rounds. -/
+
+/-- How a local of the telescope is proved: a fact `x : ty` by `val` (a term
+    in the earlier locals), an existential's witness `w : α` and property
+    `hw : ty` (`ty = p w`) by `Exists.elim pf`. -/
+inductive Entry where
+  | fact (x : FVarId) (n : Name) (ty val : Expr)
+  | witness (w : FVarId) (wn : Name) (hw : FVarId) (hwn : Name) (u : Level) (α p pf ty : Expr)
+
+/-- The locals introduced since the telescope started; `lctx` is the working
+    context, without the hypotheses the engine has dropped. -/
+structure Tele where
+  lctx : LocalContext
+  entries : Array Entry := #[]
+
+def Tele.add (t : Tele) (n : Name) (ty val : Expr) : MetaM (Tele × Expr) := do
+  let fv ← mkFreshFVarId
+  return ({ t with lctx := t.lctx.mkLocalDecl fv n ty, entries := t.entries.push (.fact fv n ty val) }, .fvar fv)
+
+def Tele.hide (t : Tele) (fvs : Array FVarId) : Tele :=
+  { t with lctx := fvs.foldl (·.erase ·) t.lctx }
+
+/-- Run `k` in the telescope's working context. -/
+def Tele.run (t : Tele) (k : MetaM α) : MetaM α := do
+  withLCtx t.lctx (← getLocalInstances) k
+
+/-- The proof of `target` from `body`, a term in the telescope's context: the
+    facts' proofs are substituted for them (as instantiating a chain of goals
+    would), and every witness is bound by an `Exists.elim`. The witnesses are
+    abstracted in one pass over the term (each subterm once per binder depth
+    it occurs at), so the cost is linear in the size of the proof, not
+    quadratic in the number of locals. -/
+def Tele.close (t : Tele) (target body : Expr) : Expr := Id.run do
+  -- Substitute the facts; the binder level of each witness.
+  let mut m : Std.HashMap FVarId Expr := {}
+  let mut lvl : Std.HashMap FVarId Nat := {}
+  let mut ws := #[]
+  let mut n := 0
+  let subst (m : Std.HashMap FVarId Expr) (e : Expr) : Expr :=
+    if m.isEmpty then e else
+    e.replace fun x => if !x.hasFVar then some x else if x.isFVar then m[x.fvarId!]? else none
+  for e in t.entries do
+    match e with
+    | .fact x _ _ val => m := m.insert x (subst m val)
+    | .witness w wn hw hwn u α p pf ty =>
+      lvl := (lvl.insert w n).insert hw (n + 1); n := n + 2
+      ws := ws.push (wn, hwn, u, subst m α, subst m p, subst m pf, subst m ty)
+  let body := subst m body
+  let rec go (e : Expr) (d : Nat) : StateM (Std.HashMap (Expr × Nat) Expr) Expr := do
+    if !e.hasFVar then return e
+    if let some r := (← get)[(e, d)]? then return r
+    let r ← match e with
+      | .fvar f => pure (match lvl[f]? with | some l => .bvar (d - 1 - l) | none => e)
+      | .app f a => pure <| e.updateApp! (← go f d) (← go a d)
+      | .lam _ t b _ => pure <| e.updateLambdaE! (← go t d) (← go b (d + 1))
+      | .forallE _ t b _ => pure <| e.updateForallE! (← go t d) (← go b (d + 1))
+      | .letE _ t v b nd => pure <| e.updateLet! (← go t d) (← go v d) (← go b (d + 1)) nd
+      | .mdata _ b => pure <| e.updateMData! (← go b d)
+      | .proj _ _ b => pure <| e.updateProj! (← go b d)
+      | _ => pure e
+    modify (·.insert (e, d) r)
+    return r
+  let build : StateM (Std.HashMap (Expr × Nat) Expr) Expr := do
+    let mut acc ← go body n
+    let mut d := n
+    for (wn, hwn, u, α, p, pf, ty) in ws.reverse do
+      d := d - 2
+      let α' ← go α d
+      let body := Expr.lam wn α' (.lam hwn (← go ty (d + 1)) acc .default) .default
+      acc := mkApp5 (mkConst ``Exists.elim [u]) α' (← go p d) target (← go pf d) body
+    return acc
+  return build.run' {}
 
 /-- A new fact: its proof, its statement, whether the statement is known to be
     in normal form, and the user name to keep (a rewritten hypothesis keeps its
     name, which rules are looked up by). -/
 abbrev Fact := Expr × Expr × Bool × Option Name
 
-/-- Replace the hypotheses `drop` by `facts`, split into their `∧`/`∃`
-    leaves, in one new goal. -/
-def introduce (g : MVarId) (st : State) (facts : Array Fact) (drop : Array FVarId) :
-    MetaM (MVarId × State) := g.withContext do
-  if facts.isEmpty then return (← g.tryClearMany drop, st)
-  let target ← instantiateMVars (← g.getType)
-  let propTarget ← isProp target
-  let lctx ← getLCtx
-  let linsts ← getLocalInstances
-  let tag ← g.getTag
-  let newGoal ← IO.mkRef (none : Option (MVarId × Array Nat × Nat))
-  let rec go (j : Nat) (bs as : Array Expr) (ds : Array Nat) : MetaM Expr := do
-    if h : j < facts.size then
-      let (pf, t, isDone, name?) := facts[j]
-      decompose target propTarget pf t isDone name? bs as ds (go (j + 1))
-    else
-      -- The new goal lives in the old context and takes the new locals as
-      -- arguments, so building the proof needs no delayed assignment.
-      let gType ← mkForallFVars bs target
-      let G ← mkFreshExprMVarAt lctx linsts gType .syntheticOpaque tag
-      newGoal.set (some (G.mvarId!, ds, bs.size))
-      return mkAppN G as
-  let pf ← go 0 #[] #[] #[]
-  g.assign pf
-  let some (G, ds, n) ← newGoal.get | throwError "eval_sym: introduce failed"
-  let (fvs, G) ← G.introNP n
-  let G ← G.tryClearMany drop
-  let st ← G.withContext do
-    let mut done := st.done
-    for i in ds do
-      done := done.insert (← instantiateMVars (← fvs[i]!.getDecl).type)
-    return { st with done }
-  return (G, st)
+/-- Add the fact `pf : ty`, split into its `∧`/`∃` leaves. -/
+partial def decompose (propTarget : Bool) (t : Tele) (st : State) (pf ty : Expr) (isDone : Bool) (name? : Option Name) :
+    MetaM (Tele × State) := do
+  if ty.isAppOfArity ``And 2 then
+    let a := ty.appFn!.appArg!
+    let b := ty.appArg!
+    let (t, st) ← decompose propTarget t st (mkApp3 (mkConst ``And.left) a b pf) a isDone none
+    decompose propTarget t st (mkApp3 (mkConst ``And.right) a b pf) b isDone none
+  else if propTarget && ty.isAppOfArity ``Exists 2 then
+    let α := ty.appFn!.appArg!
+    let p := ty.appArg!
+    let u ← t.run (getLevel α)
+    let n := match p with | .lam n .. => n | _ => `w
+    let w ← mkFreshFVarId
+    let hw ← mkFreshFVarId
+    let wn ← mkFreshUserName n
+    let hwn ← mkFreshUserName `h
+    let hty := p.beta #[.fvar w]
+    let t := { t with
+      lctx := (t.lctx.mkLocalDecl w wn α).mkLocalDecl hw hwn hty
+      entries := t.entries.push (.witness w wn hw hwn u α p pf hty) }
+    if hty.isAppOfArity ``And 2 || hty.isAppOfArity ``Exists 2 then
+      let (t, st) ← decompose propTarget t st (.fvar hw) hty isDone none
+      return (t.hide #[hw], st)
+    return (t, if isDone then { st with done := st.done.insert hty } else st)
+  else
+    let (t, _) ← t.add (← name?.getDM (mkFreshUserName `h)) ty pf
+    return (t, if isDone then { st with done := st.done.insert ty } else st)
 
 /-- Register new variable definitions `x = t` / `t = x` (`x` a local, not in
     `t`) as rewrite rules. Rules stay acyclic: `t` must not mention a defined
@@ -198,15 +265,15 @@ def introduce (g : MVarId) (st : State) (facts : Array Fact) (drop : Array FVarI
     an engine-introduced one is defined in terms of a user-named one, so a
     name the user gives with `obtain ⟨out, hout⟩ : ∃ out, … := ⟨_, ‹_›⟩`
     replaces the anonymous variable everywhere on the next `eval_sym`. -/
-def addDefinitions (g : MVarId) (st : State) : MetaM (State × Bool) := g.withContext do
-  let lctx ← getLCtx
+def addDefinitions (t : Tele) (st : State) : MetaM State := t.run do
+  let lctx := t.lctx
   let mut st := st
-  let mut progress := false
+  let ruleNames : Std.HashSet Name := st.rules.foldl (·.insert ·.1) {}
   for d in lctx do
     if d.isImplementationDetail then continue
-    if st.rules.any (·.1 == d.userName) then continue
-    let t ← instantiateMVars d.type
-    let some (_, a, b) := t.eq? | continue
+    if ruleNames.contains d.userName then continue
+    let ty ← instantiateMVars d.type
+    let some (_, a, b) := ty.eq? | continue
     let isVar (e : Expr) : Bool :=
       e.isFVar && !(lctx.get! e.fvarId!).isLet && !st.defined.contains e.fvarId!
     let mentionsDefined (e : Expr) : Bool := e.hasAnyFVar (st.defined.contains ·)
@@ -224,29 +291,25 @@ def addDefinitions (g : MVarId) (st : State) : MetaM (State × Bool) := g.withCo
       else if isVar b && !a.containsFVar b.fvarId! && !mentionsDefined a then some (b.fvarId!, true)
       else none
     let some (x, flip) := pick | continue
-    if (st.rules.map (·.1)).contains d.userName then continue
     st := { st with
       rules := st.rules.push (d.userName, flip)
       defined := st.defined.insert x
       defs := st.defs.push (d.userName, x)
       done := st.done.filter fun e => !e.containsFVar x }
-    progress := true
-  return (st, progress)
+  return st
 
-/-- One round's changes, without touching the goal: every hypothesis whose
-    statement is not in normal form is simplified (with the rules as extra
-    rewrite rules), every `∧`/`∃` hypothesis is split, a second copy of a
-    proposition is dropped, and of two hypotheses `e = some a`, `e = some b`
-    (e.g. a register read twice) the second becomes `some a = some b`.
-    Returns `none` if a hypothesis became `False` (goal closed). -/
-def collect (cfg : Cfg) (g : MVarId) (st : State) : MetaM (Option (Array Fact × Array FVarId × State)) :=
-    g.withContext do
-  let lctx ← getLCtx
-  let target ← instantiateMVars (← g.getType)
-  let propTarget ← isProp target
+/-- One round's changes: every hypothesis whose statement is not in normal
+    form is simplified (with the rules as extra rewrite rules), every `∧`/`∃`
+    hypothesis is split, a second copy of a proposition is dropped, and of two
+    hypotheses `e = some a`, `e = some b` (e.g. a register read twice) the
+    second becomes `some a = some b`. Returns the new facts and the hypotheses
+    they replace, or `.inl pf` if a hypothesis became `False` (`pf` proves the
+    target). -/
+def collect (cfg : Cfg) (target : Expr) (t : Tele) (st : State) :
+    MetaM (Expr ⊕ (Array Fact × Array FVarId × State)) := t.run do
   let mut ctx := cfg.ctx
   for (n, flip) in st.rules do
-    if let some d := lctx.findFromUserName? n then
+    if let some d := t.lctx.findFromUserName? n then
       let pf ← if flip then mkEqSymm d.toExpr else pure d.toExpr
       ctx := ctx.setSimpTheorems (← ctx.simpTheorems.addTheorem (.fvar d.fvarId) pf)
   let mut st := st
@@ -254,30 +317,30 @@ def collect (cfg : Cfg) (g : MVarId) (st : State) : MetaM (Option (Array Fact ×
   let mut drop := #[]
   let mut types : Std.HashSet Expr := {}
   let mut seen : Std.HashMap Expr (Expr × Expr) := {}
-  for d in lctx do
+  let ruleNames : Std.HashSet Name := st.rules.foldl (·.insert ·.1) {}
+  for d in t.lctx do
     if d.isImplementationDetail then continue
-    let t ← instantiateMVars d.type
-    unless ← isProp t do continue
-    let isRule := st.rules.any (·.1 == d.userName)
-    if types.contains t && !isRule then drop := drop.push d.fvarId; continue
-    types := types.insert t
-    if t.isAppOfArity ``And 2 || (propTarget && t.isAppOfArity ``Exists 2) then
-      facts := facts.push (d.toExpr, t, st.done.contains t, none)
+    let ty ← instantiateMVars d.type
+    unless ← isProp ty do continue
+    let isRule := ruleNames.contains d.userName
+    if types.contains ty && !isRule then drop := drop.push d.fvarId; continue
+    types := types.insert ty
+    if ty.isAppOfArity ``And 2 || (cfg.propTarget && ty.isAppOfArity ``Exists 2) then
+      facts := facts.push (d.toExpr, ty, st.done.contains ty, none)
       drop := drop.push d.fvarId
       continue
-    if !st.done.contains t && (cfg.loops || !isLoopFact t) then
+    if !st.done.contains ty && (cfg.loops || !isLoopFact ty) then
       let ctx' := ctx.setSimpTheorems (ctx.simpTheorems.eraseTheorem (.fvar d.fvarId))
       let t0 ← IO.monoMsNow
-      let (r, _) ← simp t ctx' cfg.simprocs none
+      let (r, _) ← simp ty ctx' cfg.simprocs none
       let dt := (← IO.monoMsNow) - t0
-      trace[eval_sym] "simp {dt}ms: {t.approxDepth} {if r.expr == t then "(normal)" else ""}"
+      trace[eval_sym] "simp {dt}ms: {ty.approxDepth} {if r.expr == ty then "(normal)" else ""}"
       if r.expr.isFalse then
         let pf ← match r.proof? with
           | some p => mkEqMP p d.toExpr
           | none => pure d.toExpr
-        g.assign (← mkFalseElim target pf)
-        return none
-      if r.expr != t then
+        return .inl (← mkFalseElim target pf)
+      if r.expr != ty then
         drop := drop.push d.fvarId
         unless r.expr.isTrue do
           let pf ← match r.proof? with
@@ -285,9 +348,9 @@ def collect (cfg : Cfg) (g : MVarId) (st : State) : MetaM (Option (Array Fact ×
             | none => mkExpectedTypeHint d.toExpr r.expr
           facts := facts.push (pf, r.expr, true, some d.userName)
         continue
-      st := { st with done := st.done.insert t }
-    -- `t` stays: look for a second read of the same `e = some _`.
-    let some (_, l, rhs) := t.eq? | continue
+      st := { st with done := st.done.insert ty }
+    -- `ty` stays: look for a second read of the same `e = some _`.
+    let some (_, l, rhs) := ty.eq? | continue
     unless rhs.isAppOfArity ``Option.some 2 do continue
     match seen[l]? with
     | none => seen := seen.insert l (d.toExpr, rhs)
@@ -297,119 +360,151 @@ def collect (cfg : Cfg) (g : MVarId) (st : State) : MetaM (Option (Array Fact ×
       unless r1 == rhs do
         let pf ← mkEqTrans (← mkEqSymm h1) d.toExpr
         facts := facts.push (pf, ← inferType pf, false, none)
-  return some (facts, drop, st)
+  return .inr (facts, drop, st)
 
-/-- Release every top-level `Later` hypothesis. -/
-def releaseTop (g : MVarId) : MetaM (MVarId × Bool) := g.withContext do
-  let mut g := g
+/-- Release the `Later`s of the hypotheses: at the top (`nested := false`),
+    or under a binder in hypotheses other than disjunctions (`nested := true`),
+    so `simp` continues there. -/
+def release (cfg : Cfg) (t : Tele) (nested : Bool) : MetaM (Option Tele) := t.run do
+  let mut out := t
   let mut progress := false
-  for d in ← getLCtx do
+  for d in t.lctx do
     if d.isImplementationDetail then continue
-    let t ← instantiateMVars d.type
-    if t.isAppOfArity ``ErgoTreeLean.Later 1 then
-      g ← g.replaceLocalDeclDefEq d.fvarId t.appArg!
-      progress := true
-  return (g, progress)
-
-/-- Release the `Later`s nested (under a binder) in hypotheses other than
-    disjunctions, so `simp` continues there. -/
-def releaseNested (cfg : Cfg) (g : MVarId) : MetaM (MVarId × Bool) := g.withContext do
-  let mut g := g
-  let mut progress := false
-  for d in ← getLCtx do
-    if d.isImplementationDetail then continue
-    let t ← instantiateMVars d.type
-    if t.isAppOfArity ``Or 2 then continue
-    if !cfg.loops && isLoopFact t then continue
-    if containsLater t then
-      g ← g.replaceLocalDeclDefEq d.fvarId (releaseAll t)
-      progress := true
-  return (g, progress)
+    let ty ← instantiateMVars d.type
+    let ty' ←
+      if !nested then
+        if ty.isAppOfArity ``ErgoTreeLean.Later 1 then pure ty.appArg! else continue
+      else
+        if ty.isAppOfArity ``Or 2 || (!cfg.loops && isLoopFact ty) || !containsLater ty then continue
+        pure (releaseAll ty)
+    let (o, _) ← out.add d.userName ty' d.toExpr
+    out := o.hide #[d.fvarId]
+    progress := true
+  return if progress then some out else none
 
 /-- A disjunction with a postponed branch (an `if` whose condition is still
     undecided). -/
-def findBranch (g : MVarId) : MetaM (Option FVarId) := g.withContext do
-  for d in ← getLCtx do
+def findBranch (t : Tele) : MetaM (Option LocalDecl) := t.run do
+  for d in t.lctx do
     if d.isImplementationDetail then continue
-    let t ← instantiateMVars d.type
-    if t.isAppOfArity ``Or 2 && containsLater t then return some d.fvarId
+    let ty ← instantiateMVars d.type
+    if ty.isAppOfArity ``Or 2 && containsLater ty then return some d
   return none
 
-/-- Split the goal on the disjunction `fv`; in each branch the first conjunct
-    (the branch condition) becomes a rule. -/
-def splitBranch (g : MVarId) (fv : FVarId) (st : State) : MetaM (List (MVarId × State)) := do
-  let subgoals ← g.cases fv
-  let mut out := []
-  for sg in subgoals.reverse do
-    let g := sg.mvarId
-    let some field := sg.fields[0]? | out := (g, st) :: out; continue
-    let some hfv := field.fvarId? | out := (g, st) :: out; continue
-    let t ← g.withContext do instantiateMVars (← hfv.getDecl).type
-    if t.isAppOfArity ``And 2 then
-      let a := t.appFn!.appArg!
-      let b := t.appArg!
-      let gname ← mkFreshUserName `guard
-      let (_, g1) ← g.withContext do g.assertHypotheses #[
-        { userName := gname, type := a, value := mkApp3 (mkConst ``And.left) a b field },
-        { userName := ← mkFreshUserName `h, type := b, value := mkApp3 (mkConst ``And.right) a b field }]
-      let g2 ← g1.tryClear hfv
-      -- A new rule: every statement must be looked at again.
-      out := (g2, { st with done := {}, rules := st.rules.push (gname, false) }) :: out
-    else
-      out := (g, st) :: out
-  return out
-
-/-- Drop the definitions whose variable no longer occurs anywhere else (the
-    rewriting has substituted it everywhere). -/
-def cleanup (g : MVarId) (st : State) : MetaM MVarId := g.withContext do
-  let lctx ← getLCtx
-  let target ← instantiateMVars (← g.getType)
-  let mut toClear := #[]
+/-- The definitions whose variable no longer occurs anywhere else (the
+    rewriting has substituted it everywhere), to be hidden with it. -/
+def unusedDefs (target : Expr) (t : Tele) (st : State) : MetaM (Array FVarId) := t.run do
+  let mut out := #[]
   for (n, x) in st.defs do
-    let some hd := lctx.findFromUserName? n | continue
-    unless lctx.contains x do continue
+    let some hd := t.lctx.findFromUserName? n | continue
+    unless t.lctx.contains x do continue
     if target.containsFVar x then continue
     let mut used := false
-    for d in lctx do
+    for d in t.lctx do
+      if d.isImplementationDetail then continue
       if d.fvarId == hd.fvarId || d.fvarId == x then continue
       if (← instantiateMVars d.type).containsFVar x then used := true; break
-    unless used do toClear := toClear.push (hd.fvarId, x)
-  let mut g := g
-  for (h, x) in toClear do
-    g ← g.tryClear h
-    g ← g.tryClear x
-  return g
+    unless used do out := out.push hd.fvarId |>.push x
+  return out
 
-/-- Close the goal if some hypothesis is `False`. -/
-def closeFalse (g : MVarId) : MetaM Bool := g.withContext do
-  for d in ← getLCtx do
-    if d.isImplementationDetail then continue
-    if (← instantiateMVars d.type).isFalse then
-      g.assign (← mkFalseElim (← g.getType) d.toExpr)
-      return true
-  return false
+/-- The statements a new rule `a` can rewrite: those containing its left-hand
+    side (for an equation), the negated proposition, or `a` itself. -/
+def ruleSubject (a : Expr) : Expr :=
+  match a.eq? with
+  | some (_, l, _) => l
+  | none => if a.isAppOfArity ``Not 1 then a.appArg! else a
 
-/-- The `eval_sym` loop on one goal. -/
-partial def run (cfg : Cfg) (g : MVarId) (st : State) : MetaM (List MVarId) := do
-  if ← closeFalse g then return []
-  let (st, _) ← addDefinitions g st
-  let some (facts, drop, st) ← collect cfg g st | return []
-  if !facts.isEmpty || !drop.isEmpty then
-    let (g, st) ← introduce g st facts drop
-    return ← run cfg g st
+inductive Step where
+  | next (t : Tele) (st : State)
+  /-- The proof of the target in the telescope's context, and the goals it
+      leaves. -/
+  | finish (pf : Expr) (goals : List MVarId)
+
+mutual
+
+/-- One round on the telescope. -/
+partial def step (cfg : Cfg) (target : Expr) (tag : Name) (t : Tele) (st : State) : MetaM Step := do
+  let isFalse ← t.run do
+    for d in t.lctx do
+      if !d.isImplementationDetail && (← instantiateMVars d.type).isFalse then return some d.toExpr
+    return none
+  if let some h := isFalse then return .finish (← t.run (mkFalseElim target h)) []
+  let st ← addDefinitions t st
+  match ← collect cfg target t st with
+  | .inl pf => return .finish pf []
+  | .inr (facts, drop, st) =>
+    if !facts.isEmpty || !drop.isEmpty then
+      let mut t := t.hide drop
+      let mut st := st
+      for (pf, ty, isDone, name?) in facts do
+        (t, st) ← decompose cfg.propTarget t st pf ty isDone name?
+      return .next t st
   -- An undecided `if` is split before its continuation is released, so the
   -- continuation sees the branch's value and condition.
-  if let some fv ← findBranch g then
-    let branches ← splitBranch g fv st
-    let mut out := []
-    for (g', st') in branches do
-      out := out ++ (← run cfg g' st')
-    return out
-  let (g, p) ← releaseTop g
-  if p then return ← run cfg g st
-  let (g, p) ← releaseNested cfg g
-  if p then return ← run cfg g st
-  return [← cleanup g st]
+  if cfg.propTarget then
+    if let some d ← findBranch t then
+      let (pf, goals) ← splitBranch cfg target tag (t.hide #[d.fvarId]) st d
+      return .finish pf goals
+  if let some t ← release cfg t false then return .next t st
+  if let some t ← release cfg t true then return .next t st
+  let t := t.hide (← unusedDefs target t st)
+  -- The remaining goal takes the visible locals of the telescope as arguments
+  -- (so the `let`s never close over a metavariable's context).
+  let xs := t.lctx.foldl (init := #[]) fun xs d =>
+    if d.isImplementationDetail || cfg.root.contains d.fvarId then xs else xs.push d.toExpr
+  let baseLctx := xs.foldl (·.erase ·.fvarId!) t.lctx
+  let gType ← t.run (mkForallFVars xs target)
+  let G ← mkFreshExprMVarAt baseLctx (← getLocalInstances) gType .syntheticOpaque tag
+  let (_, g) ← G.mvarId!.introNP xs.size
+  return .finish (mkAppN G xs) [g]
+
+/-- Run the engine on a telescope until it finishes; the proof of the target
+    in the context the telescope started from. -/
+partial def runTele (cfg : Cfg) (target : Expr) (tag : Name) (t : Tele) (st : State) :
+    MetaM (Expr × List MVarId) := do
+  let mut t := t
+  let mut st := st
+  repeat
+    match ← step cfg target tag t st with
+    | .next t' st' => t := t'; st := st'
+    | .finish pf goals =>
+      return (t.close target pf, goals)
+  unreachable!
+
+/-- Split on the disjunction `d`; in each branch the first conjunct (the branch
+    condition) becomes a rule. -/
+partial def splitBranch (cfg : Cfg) (target : Expr) (tag : Name) (t : Tele) (st : State) (d : LocalDecl) :
+    MetaM (Expr × List MVarId) := do
+  let ty ← t.run (instantiateMVars d.type)
+  let a := ty.appFn!.appArg!
+  let b := ty.appArg!
+  let branch (side : Expr) : MetaM (Expr × List MVarId) := do
+    let hfv ← mkFreshFVarId
+    let hn ← mkFreshUserName `h
+    let lctx := t.lctx.mkLocalDecl hfv hn side
+    let h := Expr.fvar hfv
+    let tb : Tele := { lctx }
+    let (tb, st) ←
+      if side.isAppOfArity ``And 2 then do
+        let a1 := side.appFn!.appArg!
+        let b1 := side.appArg!
+        tb.run do trace[eval_sym] "split on {a1}"
+        let gname ← mkFreshUserName `guard
+        let (tb, _) ← tb.add gname a1 (mkApp3 (mkConst ``And.left) a1 b1 h)
+        let (tb, _) ← tb.add (← mkFreshUserName `h) b1 (mkApp3 (mkConst ``And.right) a1 b1 h)
+        -- A new rule: the statements it can rewrite must be looked at again.
+        let s := ruleSubject a1
+        pure (tb.hide #[hfv], { st with
+          done := st.done.filter fun e => (e.find? (· == s)).isNone
+          rules := st.rules.push (gname, false) })
+      else pure (tb, st)
+    let (pf, goals) ← runTele cfg target tag tb st
+    return (← withLCtx lctx (← getLocalInstances) (mkLambdaFVars #[h] pf), goals)
+  let (p1, g1) ← branch a
+  let (p2, g2) ← branch b
+  return (mkApp6 (mkConst ``Or.elim) a b target d.toExpr p1 p2, g1 ++ g2)
+
+end
 
 /-- Does `stx` (an extra simp lemma) mention a loop helper? -/
 def mentionsLoopHelper (stx : Syntax) : TacticM Bool := do
@@ -437,11 +532,17 @@ def evalSym (extra : Array (TSyntax `Lean.Parser.Tactic.simpLemma)) : TacticM Un
       decide_eq_true_eq, Int.natCast_nonneg, $extra,*])
   let { ctx, simprocs, .. } ← withMainContext <| mkSimpContext stx (eraseLocal := false)
   let loops ← extra.anyM fun e => mentionsLoopHelper e.raw
-  let cfg : Cfg := { ctx, simprocs, loops }
-  let goals ← run cfg (← getMainGoal) { rules := locals.map (·, false) }
-  replaceMainGoal goals
+  let g ← getMainGoal
+  g.withContext do
+    let lctx ← getLCtx
+    let target ← instantiateMVars (← g.getType)
+    let cfg : Cfg := { ctx, simprocs, loops, root := lctx.foldl (·.insert ·.fvarId) {}, propTarget := ← isProp target }
+    let (pf, goals) ← runTele cfg target (← g.getTag) { lctx } { rules := locals.map (·, false) }
+    g.assign pf
+    replaceMainGoal goals
 
 end ErgoTreeLeanEvalSym
+
 
 namespace ErgoTreeLean
 

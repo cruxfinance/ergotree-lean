@@ -354,63 +354,63 @@ theorem eval_ord_ok (op : RelationOp) (hop : op ≠ .eq ∧ op ≠ .neq) (l r : 
         | none => simp [hk]
         | some t => obtain ⟨k, p, q⟩ := t; simp [pure, Except.pure, ordRel]; aesop
 
-@[eval_inv high] theorem eval_gt_true (l r : Expr) :
+theorem eval_gt_true (l r : Expr) :
     eval c x env (.binOp (.relation .gt) l r) = .ok (.vBool true) ↔
       ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧ p > q := by
   rw [eval_ord_ok c x env .gt ⟨nofun, nofun⟩]; simp [ordRel]
 
-@[eval_inv high] theorem eval_ge_true (l r : Expr) :
+theorem eval_ge_true (l r : Expr) :
     eval c x env (.binOp (.relation .ge) l r) = .ok (.vBool true) ↔
       ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧ p ≥ q := by
   rw [eval_ord_ok c x env .ge ⟨nofun, nofun⟩]; simp [ordRel]
 
-@[eval_inv high] theorem eval_lt_true (l r : Expr) :
+theorem eval_lt_true (l r : Expr) :
     eval c x env (.binOp (.relation .lt) l r) = .ok (.vBool true) ↔
       ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧ p < q := by
   rw [eval_ord_ok c x env .lt ⟨nofun, nofun⟩]; simp [ordRel]
 
-@[eval_inv high] theorem eval_le_true (l r : Expr) :
+theorem eval_le_true (l r : Expr) :
     eval c x env (.binOp (.relation .le) l r) = .ok (.vBool true) ↔
       ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧ p ≤ q := by
   rw [eval_ord_ok c x env .le ⟨nofun, nofun⟩]; simp [ordRel]
 
-@[eval_inv high] theorem eval_gt_false (l r : Expr) :
+theorem eval_gt_false (l r : Expr) :
     eval c x env (.binOp (.relation .gt) l r) = .ok (.vBool false) ↔
       ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧ p ≤ q := by
   rw [eval_ord_ok c x env .gt ⟨nofun, nofun⟩]; simp [ordRel]
 
-@[eval_inv high] theorem eval_ge_false (l r : Expr) :
+theorem eval_ge_false (l r : Expr) :
     eval c x env (.binOp (.relation .ge) l r) = .ok (.vBool false) ↔
       ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧ p < q := by
   rw [eval_ord_ok c x env .ge ⟨nofun, nofun⟩]; simp [ordRel]
 
-@[eval_inv high] theorem eval_lt_false (l r : Expr) :
+theorem eval_lt_false (l r : Expr) :
     eval c x env (.binOp (.relation .lt) l r) = .ok (.vBool false) ↔
       ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧ q ≤ p := by
   rw [eval_ord_ok c x env .lt ⟨nofun, nofun⟩]; simp [ordRel]
 
-@[eval_inv high] theorem eval_le_false (l r : Expr) :
+theorem eval_le_false (l r : Expr) :
     eval c x env (.binOp (.relation .le) l r) = .ok (.vBool false) ↔
       ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧ q < p := by
   rw [eval_ord_ok c x env .le ⟨nofun, nofun⟩]; simp [ordRel]
 
 /-- An ordering whose result is not yet known (e.g. bound by a `ValDef`). -/
-@[eval_inv] theorem eval_gt_ok (l r : Expr) (w : Value) :
+theorem eval_gt_ok (l r : Expr) (w : Value) :
     eval c x env (.binOp (.relation .gt) l r) = .ok w ↔
       ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧
         w = .vBool (decide (p > q)) := by
   rw [eval_ord_ok c x env .gt ⟨nofun, nofun⟩]; simp [ordRel]
-@[eval_inv] theorem eval_ge_ok (l r : Expr) (w : Value) :
+theorem eval_ge_ok (l r : Expr) (w : Value) :
     eval c x env (.binOp (.relation .ge) l r) = .ok w ↔
       ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧
         w = .vBool (decide (p ≥ q)) := by
   rw [eval_ord_ok c x env .ge ⟨nofun, nofun⟩]; simp [ordRel]
-@[eval_inv] theorem eval_lt_ok (l r : Expr) (w : Value) :
+theorem eval_lt_ok (l r : Expr) (w : Value) :
     eval c x env (.binOp (.relation .lt) l r) = .ok w ↔
       ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧
         w = .vBool (decide (p < q)) := by
   rw [eval_ord_ok c x env .lt ⟨nofun, nofun⟩]; simp [ordRel]
-@[eval_inv] theorem eval_le_ok (l r : Expr) (w : Value) :
+theorem eval_le_ok (l r : Expr) (w : Value) :
     eval c x env (.binOp (.relation .le) l r) = .ok w ↔
       ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧
         w = .vBool (decide (p ≤ q)) := by
@@ -627,7 +627,7 @@ def arithRes : ArithOp → NumKind → Int → Int → Option Int
   | .max, _, a, b => some (max a b)
   | .min, _, a, b => some (min a b)
 
-@[eval_inv] theorem eval_arith_ok (op : ArithOp) (l r : Expr) (w : Value) :
+theorem eval_arith_ok (op : ArithOp) (l r : Expr) (w : Value) :
     eval c x env (.binOp (.arith op) l r) = .ok w ↔
       ∃ a b k p q z, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧
         arithRes op k p q = some z ∧ k.wrap z = w := by
@@ -646,7 +646,7 @@ def arithRes : ArithOp → NumKind → Int → Int → Option Int
         cases op <;> simp only [arithRes] <;>
           first | (split <;> simp_all [pure, Except.pure]) | simp_all [pure, Except.pure]
 
-@[eval_inv] theorem eval_upcast_ok (e : Expr) (t : SType) (w : Value) :
+theorem eval_upcast_ok (e : Expr) (t : SType) (w : Value) :
     eval c x env (.upcast e t) = .ok w ↔
       ∃ v k p tk z, eval c x env e = .ok v ∧ v.numKind = some (k, p) ∧ sTypeToNumKind? t = some tk ∧
         upcastValue k p tk = some z ∧ tk.wrap z = w := by
@@ -658,7 +658,7 @@ def arithRes : ArithOp → NumKind → Int → Int → Option Int
     rcases hv : v.numKind with _ | ⟨k, p⟩ <;> rcases ht : sTypeToNumKind? t with _ | tk <;> simp [hv, ht]
     cases hu : upcastValue k p tk <;> simp [hu, pure, Except.pure]
 
-@[eval_inv] theorem eval_downcast_ok (e : Expr) (t : SType) (w : Value) :
+theorem eval_downcast_ok (e : Expr) (t : SType) (w : Value) :
     eval c x env (.downcast e t) = .ok w ↔
       ∃ v k p tk z, eval c x env e = .ok v ∧ v.numKind = some (k, p) ∧ sTypeToNumKind? t = some tk ∧
         downcastValue k p tk = some z ∧ tk.wrap z = w := by
@@ -841,6 +841,115 @@ variable (p : Int)
   cases k <;> cases k' <;> simp [NumKind.wrap]
 end
 
+
+/-! ## Numeric operands, telescoped
+
+The rules `eval_inv` uses for the orderings, arithmetic and casts. The
+operands' kind and payload are bound right where each operand's own equation
+fixes them (`∃ k p, eval l = .ok (k.wrap p) ∧ ∃ q, …`), so `simp` eliminates
+each existential as soon as it is decided instead of restructuring one flat
+`∃ a b k p q, …` prefix, which re-simplifies the whole body under the binders
+at every step. -/
+
+theorem sameKind_tele {A B : Value → Prop} {P : NumKind → Int → Int → Prop} :
+    (∃ a b k p q, A a ∧ B b ∧ sameKindRaw a b = some (k, p, q) ∧ P k p q) ↔
+      ∃ k p, A (k.wrap p) ∧ ∃ q, B (k.wrap q) ∧ P k p q := by
+  simp only [sameKindRaw_eq_some_iff, Value.numKind_eq_some_iff]
+  constructor
+  · rintro ⟨a, b, k, p, q, ha, hb, ⟨rfl, rfl⟩, h⟩; exact ⟨k, p, ha, q, hb, h⟩
+  · rintro ⟨k, p, ha, q, hb, h⟩; exact ⟨_, _, k, p, q, ha, hb, ⟨rfl, rfl⟩, h⟩
+
+@[eval_inv high] theorem eval_gt_true' (l r : Expr) :
+    eval c x env (.binOp (.relation .gt) l r) = .ok (.vBool true) ↔
+      ∃ (k : NumKind) (p : Int), eval c x env l = .ok (k.wrap p) ∧ ∃ q, eval c x env r = .ok (k.wrap q) ∧ p > q := by
+  rw [eval_gt_true c x env l r]; exact sameKind_tele
+
+@[eval_inv high] theorem eval_ge_true' (l r : Expr) :
+    eval c x env (.binOp (.relation .ge) l r) = .ok (.vBool true) ↔
+      ∃ (k : NumKind) (p : Int), eval c x env l = .ok (k.wrap p) ∧ ∃ q, eval c x env r = .ok (k.wrap q) ∧ p ≥ q := by
+  rw [eval_ge_true c x env l r]; exact sameKind_tele
+
+@[eval_inv high] theorem eval_lt_true' (l r : Expr) :
+    eval c x env (.binOp (.relation .lt) l r) = .ok (.vBool true) ↔
+      ∃ (k : NumKind) (p : Int), eval c x env l = .ok (k.wrap p) ∧ ∃ q, eval c x env r = .ok (k.wrap q) ∧ p < q := by
+  rw [eval_lt_true c x env l r]; exact sameKind_tele
+
+@[eval_inv high] theorem eval_le_true' (l r : Expr) :
+    eval c x env (.binOp (.relation .le) l r) = .ok (.vBool true) ↔
+      ∃ (k : NumKind) (p : Int), eval c x env l = .ok (k.wrap p) ∧ ∃ q, eval c x env r = .ok (k.wrap q) ∧ p ≤ q := by
+  rw [eval_le_true c x env l r]; exact sameKind_tele
+
+@[eval_inv high] theorem eval_gt_false' (l r : Expr) :
+    eval c x env (.binOp (.relation .gt) l r) = .ok (.vBool false) ↔
+      ∃ (k : NumKind) (p : Int), eval c x env l = .ok (k.wrap p) ∧ ∃ q, eval c x env r = .ok (k.wrap q) ∧ p ≤ q := by
+  rw [eval_gt_false c x env l r]; exact sameKind_tele
+
+@[eval_inv high] theorem eval_ge_false' (l r : Expr) :
+    eval c x env (.binOp (.relation .ge) l r) = .ok (.vBool false) ↔
+      ∃ (k : NumKind) (p : Int), eval c x env l = .ok (k.wrap p) ∧ ∃ q, eval c x env r = .ok (k.wrap q) ∧ p < q := by
+  rw [eval_ge_false c x env l r]; exact sameKind_tele
+
+@[eval_inv high] theorem eval_lt_false' (l r : Expr) :
+    eval c x env (.binOp (.relation .lt) l r) = .ok (.vBool false) ↔
+      ∃ (k : NumKind) (p : Int), eval c x env l = .ok (k.wrap p) ∧ ∃ q, eval c x env r = .ok (k.wrap q) ∧ q ≤ p := by
+  rw [eval_lt_false c x env l r]; exact sameKind_tele
+
+@[eval_inv high] theorem eval_le_false' (l r : Expr) :
+    eval c x env (.binOp (.relation .le) l r) = .ok (.vBool false) ↔
+      ∃ (k : NumKind) (p : Int), eval c x env l = .ok (k.wrap p) ∧ ∃ q, eval c x env r = .ok (k.wrap q) ∧ q < p := by
+  rw [eval_le_false c x env l r]; exact sameKind_tele
+
+@[eval_inv] theorem eval_gt_ok' (l r : Expr) (w : Value) :
+    eval c x env (.binOp (.relation .gt) l r) = .ok w ↔
+      ∃ (k : NumKind) (p : Int), eval c x env l = .ok (k.wrap p) ∧ ∃ q, eval c x env r = .ok (k.wrap q) ∧ w = .vBool (decide (p > q)) := by
+  rw [eval_gt_ok c x env l r w]; exact sameKind_tele
+
+@[eval_inv] theorem eval_ge_ok' (l r : Expr) (w : Value) :
+    eval c x env (.binOp (.relation .ge) l r) = .ok w ↔
+      ∃ (k : NumKind) (p : Int), eval c x env l = .ok (k.wrap p) ∧ ∃ q, eval c x env r = .ok (k.wrap q) ∧ w = .vBool (decide (p ≥ q)) := by
+  rw [eval_ge_ok c x env l r w]; exact sameKind_tele
+
+@[eval_inv] theorem eval_lt_ok' (l r : Expr) (w : Value) :
+    eval c x env (.binOp (.relation .lt) l r) = .ok w ↔
+      ∃ (k : NumKind) (p : Int), eval c x env l = .ok (k.wrap p) ∧ ∃ q, eval c x env r = .ok (k.wrap q) ∧ w = .vBool (decide (p < q)) := by
+  rw [eval_lt_ok c x env l r w]; exact sameKind_tele
+
+@[eval_inv] theorem eval_le_ok' (l r : Expr) (w : Value) :
+    eval c x env (.binOp (.relation .le) l r) = .ok w ↔
+      ∃ (k : NumKind) (p : Int), eval c x env l = .ok (k.wrap p) ∧ ∃ q, eval c x env r = .ok (k.wrap q) ∧ w = .vBool (decide (p ≤ q)) := by
+  rw [eval_le_ok c x env l r w]; exact sameKind_tele
+
+@[eval_inv] theorem eval_arith_ok' (op : ArithOp) (l r : Expr) (w : Value) :
+    eval c x env (.binOp (.arith op) l r) = .ok w ↔
+      ∃ (k : NumKind) (p : Int), eval c x env l = .ok (k.wrap p) ∧ ∃ q, eval c x env r = .ok (k.wrap q) ∧
+        ∃ z, arithRes op k p q = some z ∧ k.wrap z = w := by
+  rw [eval_arith_ok c x env op l r w]
+  refine Iff.trans ?_ (sameKind_tele (A := fun a => eval c x env l = .ok a) (B := fun b => eval c x env r = .ok b)
+    (P := fun k p q => ∃ z, arithRes op k p q = some z ∧ k.wrap z = w))
+  constructor
+  · rintro ⟨a, b, k, p, q, z, ha, hb, hs, hz, hw⟩; exact ⟨a, b, k, p, q, ha, hb, hs, z, hz, hw⟩
+  · rintro ⟨a, b, k, p, q, ha, hb, hs, z, hz, hw⟩; exact ⟨a, b, k, p, q, z, ha, hb, hs, hz, hw⟩
+
+@[eval_inv] theorem eval_upcast_ok' (e : Expr) (t : SType) (w : Value) :
+    eval c x env (.upcast e t) = .ok w ↔
+      ∃ tk, sTypeToNumKind? t = some tk ∧ ∃ (k : NumKind) (p : Int), eval c x env e = .ok (k.wrap p) ∧
+        ∃ z, upcastValue k p tk = some z ∧ tk.wrap z = w := by
+  rw [eval_upcast_ok c x env e t w]
+  simp only [Value.numKind_eq_some_iff]
+  constructor
+  · rintro ⟨v, k, p, tk, z, hv, rfl, ht, hz, hw⟩; exact ⟨tk, ht, k, p, hv, z, hz, hw⟩
+  · rintro ⟨tk, ht, k, p, hv, z, hz, hw⟩; exact ⟨_, k, p, tk, z, hv, rfl, ht, hz, hw⟩
+
+@[eval_inv] theorem eval_downcast_ok' (e : Expr) (t : SType) (w : Value) :
+    eval c x env (.downcast e t) = .ok w ↔
+      ∃ tk, sTypeToNumKind? t = some tk ∧ ∃ (k : NumKind) (p : Int), eval c x env e = .ok (k.wrap p) ∧
+        ∃ z, downcastValue k p tk = some z ∧ tk.wrap z = w := by
+  rw [eval_downcast_ok c x env e t w]
+  simp only [Value.numKind_eq_some_iff]
+  constructor
+  · rintro ⟨v, k, p, tk, z, hv, rfl, ht, hz, hw⟩; exact ⟨tk, ht, k, p, hv, z, hz, hw⟩
+  · rintro ⟨tk, ht, k, p, hv, z, hz, hw⟩; exact ⟨_, k, p, tk, z, hv, rfl, ht, hz, hw⟩
+
 /-! ## Orientation fixes -/
 
 @[eval_inv] theorem some_eq_register_iff (v : Value) (b : Box) (r : Int) :
@@ -849,6 +958,8 @@ end
 @[eval_inv] theorem false_eq_beq_iff {α : Type} [BEq α] (a b : α) : (false = (a == b)) ↔ (a == b) = false := eq_comm
 @[eval_inv] theorem true_eq_beq_iff {α : Type} [BEq α] (a b : α) : (true = (a == b)) ↔ (a == b) = true := eq_comm
 @[eval_inv] theorem false_eq_valueBeq_iff (a b : Value) : (false = Value.beq a b) ↔ Value.beq a b = false := eq_comm
+@[eval_inv] theorem false_eq_not_iff (b : Bool) : (false = !b) ↔ b = true := by cases b <;> simp
+@[eval_inv] theorem true_eq_not_iff (b : Bool) : (true = !b) ↔ b = false := by cases b <;> simp
 @[eval_inv] theorem true_eq_valueBeq_iff (a b : Value) : (true = Value.beq a b) ↔ Value.beq a b = true := eq_comm
 
 end ErgoTreeLean
