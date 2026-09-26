@@ -40,13 +40,18 @@ variable (c : List Value) (x : Context) (env : Env) (signers : List PK)
     EvalHolds c x env signers (.blockValue [] r) ↔ EvalHolds c x env signers r := by
   simp [EvalHolds, eval_blockValue_nil_ok]
 
-@[eval_inv] theorem EvalHolds_blockValue_cons (i : Nat) (e : Expr) (rest : List (Nat × Expr)) (r : Expr) :
+theorem EvalHolds_blockValue_cons (i : Nat) (e : Expr) (rest : List (Nat × Expr)) (r : Expr) :
     EvalHolds c x env signers (.blockValue ((i, e) :: rest) r) ↔
       ∃ v, eval c x env e = .ok v ∧ EvalHolds c x ((i, v) :: env) signers (.blockValue rest r) := by
   simp only [EvalHolds, eval_blockValue_cons_ok]
   constructor
   · rintro ⟨sb, ⟨v, hv, h⟩, hh⟩; exact ⟨v, hv, sb, h, hh⟩
   · rintro ⟨v, hv, sb, h, hh⟩; exact ⟨sb, ⟨v, hv, h⟩, hh⟩
+
+@[eval_inv] theorem EvalHolds_blockValue_cons_later (i : Nat) (e : Expr) (rest : List (Nat × Expr)) (r : Expr) :
+    EvalHolds c x env signers (.blockValue ((i, e) :: rest) r) ↔
+      ∃ v, eval c x env e = .ok v ∧ Later (EvalHolds c x ((i, v) :: env) signers (.blockValue rest r)) :=
+  EvalHolds_blockValue_cons c x env signers i e rest r
 
 @[eval_inv] theorem EvalHolds_boolToSigmaProp (e : Expr) :
     EvalHolds c x env signers (.boolToSigmaProp e) ↔ eval c x env e = .ok (.vBool true) := by
@@ -63,11 +68,17 @@ variable (c : List Value) (x : Context) (env : Env) (signers : List PK)
   · rintro ⟨sb, ⟨g, hg, heq⟩, hh⟩; simp only [Value.vSigmaProp.injEq] at heq; subst heq; exact ⟨g, hg, hh⟩
   · rintro ⟨g, hg, hh⟩; exact ⟨_, ⟨g, hg, rfl⟩, hh⟩
 
-@[eval_inv] theorem EvalHolds_ifExpr (cnd t f : Expr) :
+theorem EvalHolds_ifExpr (cnd t f : Expr) :
     EvalHolds c x env signers (.ifExpr cnd t f) ↔
       (eval c x env cnd = .ok (.vBool true) ∧ EvalHolds c x env signers t) ∨
       (eval c x env cnd = .ok (.vBool false) ∧ EvalHolds c x env signers f) := by
   simp only [EvalHolds, eval_ifExpr_ok]; aesop
+
+@[eval_inv] theorem EvalHolds_ifExpr_later (cnd t f : Expr) :
+    EvalHolds c x env signers (.ifExpr cnd t f) ↔
+      (eval c x env cnd = .ok (.vBool true) ∧ Later (EvalHolds c x env signers t)) ∨
+      (eval c x env cnd = .ok (.vBool false) ∧ Later (EvalHolds c x env signers f)) :=
+  EvalHolds_ifExpr c x env signers cnd t f
 
 theorem evalList_toSigmaProps_holdsAll (items : List Expr) :
     (∃ vs sbs, evalList c x env items = .ok vs ∧ toSigmaProps vs = .ok sbs ∧ ∀ sb ∈ sbs, holds signers sb) ↔

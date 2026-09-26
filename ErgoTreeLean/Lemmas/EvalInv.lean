@@ -29,6 +29,21 @@ set_option linter.unnecessarySeqFocus false
 
 namespace ErgoTreeLean
 
+/-! ## Postponed facts
+
+`Later p` is `p`, marked as a fact `eval_sym` decodes only once everything
+before it is decoded: the rest of a block after a `ValDef`, and the branches of
+an `if`. Its engine stops `simp` at a `Later` (the `laterStop` simproc,
+`Tactics/EvalSym.lean`), so a block is executed one definition at a time, each
+continuation seeing the value of the definition before it, and a branch whose
+condition is already decided is dropped unexamined. `eval_simp` unfolds `Later`
+right away (`later_iff`). -/
+
+/-- `p`, postponed; see above. -/
+def Later (p : Prop) : Prop := p
+
+theorem later_iff (p : Prop) : Later p ↔ p := Iff.rfl
+
 /-! ## `Except` normalization -/
 
 @[eval_inv] theorem Except.bind_eq_ok_iff {ε α β} (x : Except ε α) (f : α → Except ε β) (b : β) :
@@ -218,7 +233,7 @@ local macro "inv_unary" e:term : tactic => `(tactic| (
       · simp; omega
       · split <;> simp_all
 
-@[eval_inv] theorem eval_ifExpr_ok (cnd t f : Expr) (w : Value) :
+theorem eval_ifExpr_ok (cnd t f : Expr) (w : Value) :
     eval c x env (.ifExpr cnd t f) = .ok w ↔
       (eval c x env cnd = .ok (.vBool true) ∧ eval c x env t = .ok w) ∨
       (eval c x env cnd = .ok (.vBool false) ∧ eval c x env f = .ok w) := by
@@ -228,6 +243,12 @@ local macro "inv_unary" e:term : tactic => `(tactic| (
   | ok v =>
     cases v <;> simp [bind, Except.bind]
     rename_i b; cases b <;> simp
+
+@[eval_inv] theorem eval_ifExpr_later (cnd t f : Expr) (w : Value) :
+    eval c x env (.ifExpr cnd t f) = .ok w ↔
+      (eval c x env cnd = .ok (.vBool true) ∧ Later (eval c x env t = .ok w)) ∨
+      (eval c x env cnd = .ok (.vBool false) ∧ Later (eval c x env f = .ok w)) :=
+  eval_ifExpr_ok c x env cnd t f w
 
 /-! ## Logical `&&` / `||` (lazy) -/
 
@@ -353,19 +374,66 @@ theorem eval_ord_ok (op : RelationOp) (hop : op ≠ .eq ∧ op ≠ .neq) (l r : 
       ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧ p ≤ q := by
   rw [eval_ord_ok c x env .le ⟨nofun, nofun⟩]; simp [ordRel]
 
+@[eval_inv high] theorem eval_gt_false (l r : Expr) :
+    eval c x env (.binOp (.relation .gt) l r) = .ok (.vBool false) ↔
+      ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧ p ≤ q := by
+  rw [eval_ord_ok c x env .gt ⟨nofun, nofun⟩]; simp [ordRel]
+
+@[eval_inv high] theorem eval_ge_false (l r : Expr) :
+    eval c x env (.binOp (.relation .ge) l r) = .ok (.vBool false) ↔
+      ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧ p < q := by
+  rw [eval_ord_ok c x env .ge ⟨nofun, nofun⟩]; simp [ordRel]
+
+@[eval_inv high] theorem eval_lt_false (l r : Expr) :
+    eval c x env (.binOp (.relation .lt) l r) = .ok (.vBool false) ↔
+      ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧ q ≤ p := by
+  rw [eval_ord_ok c x env .lt ⟨nofun, nofun⟩]; simp [ordRel]
+
+@[eval_inv high] theorem eval_le_false (l r : Expr) :
+    eval c x env (.binOp (.relation .le) l r) = .ok (.vBool false) ↔
+      ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧ q < p := by
+  rw [eval_ord_ok c x env .le ⟨nofun, nofun⟩]; simp [ordRel]
+
+/-- An ordering whose result is not yet known (e.g. bound by a `ValDef`). -/
+@[eval_inv] theorem eval_gt_ok (l r : Expr) (w : Value) :
+    eval c x env (.binOp (.relation .gt) l r) = .ok w ↔
+      ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧
+        w = .vBool (decide (p > q)) := by
+  rw [eval_ord_ok c x env .gt ⟨nofun, nofun⟩]; simp [ordRel]
+@[eval_inv] theorem eval_ge_ok (l r : Expr) (w : Value) :
+    eval c x env (.binOp (.relation .ge) l r) = .ok w ↔
+      ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧
+        w = .vBool (decide (p ≥ q)) := by
+  rw [eval_ord_ok c x env .ge ⟨nofun, nofun⟩]; simp [ordRel]
+@[eval_inv] theorem eval_lt_ok (l r : Expr) (w : Value) :
+    eval c x env (.binOp (.relation .lt) l r) = .ok w ↔
+      ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧
+        w = .vBool (decide (p < q)) := by
+  rw [eval_ord_ok c x env .lt ⟨nofun, nofun⟩]; simp [ordRel]
+@[eval_inv] theorem eval_le_ok (l r : Expr) (w : Value) :
+    eval c x env (.binOp (.relation .le) l r) = .ok w ↔
+      ∃ a b k p q, eval c x env l = .ok a ∧ eval c x env r = .ok b ∧ sameKindRaw a b = some (k, p, q) ∧
+        w = .vBool (decide (p ≤ q)) := by
+  rw [eval_ord_ok c x env .le ⟨nofun, nofun⟩]; simp [ordRel]
+
 /-! ## Blocks, one `ValDef` at a time -/
 
 @[eval_inv] theorem eval_blockValue_nil_ok (r : Expr) (w : Value) :
     eval c x env (.blockValue [] r) = .ok w ↔ eval c x env r = .ok w := by
   simp [eval, evalDefs, pure, Except.pure, bind, Except.bind]
 
-@[eval_inv] theorem eval_blockValue_cons_ok (i : Nat) (e : Expr) (rest : List (Nat × Expr)) (r : Expr) (w : Value) :
+theorem eval_blockValue_cons_ok (i : Nat) (e : Expr) (rest : List (Nat × Expr)) (r : Expr) (w : Value) :
     eval c x env (.blockValue ((i, e) :: rest) r) = .ok w ↔
       ∃ v, eval c x env e = .ok v ∧ eval c x ((i, v) :: env) (.blockValue rest r) = .ok w := by
   simp only [eval, evalDefs]
   cases h : eval c x env e with
   | error => simp [bind, Except.bind]
   | ok v => simp [bind, Except.bind]
+
+@[eval_inv] theorem eval_blockValue_cons_later (i : Nat) (e : Expr) (rest : List (Nat × Expr)) (r : Expr) (w : Value) :
+    eval c x env (.blockValue ((i, e) :: rest) r) = .ok w ↔
+      ∃ v, eval c x env e = .ok v ∧ Later (eval c x ((i, v) :: env) (.blockValue rest r) = .ok w) :=
+  eval_blockValue_cons_ok c x env i e rest r w
 
 /-! ## Evaluated lists (`sigmaAnd`/`sigmaOr`/`collection`/`tuple`) -/
 
@@ -608,8 +676,20 @@ def arithRes : ArithOp → NumKind → Int → Int → Option Int
 
 /-- Widening never fails: `upcast` to a wider or equal kind returns the value. -/
 @[eval_inv] theorem upcastValue_eq_some_iff (k : NumKind) (p : Int) (tk : NumKind) (z : Int) :
-    upcastValue k p tk = some z ↔ (k = tk ∨ tk.rank > k.rank) ∧ p = z := by
-  unfold upcastValue; split <;> simp_all
+    upcastValue k p tk = some z ↔ k.rank ≤ tk.rank ∧ p = z := by
+  unfold upcastValue
+  cases k <;> cases tk <;> simp [NumKind.rank]
+
+section
+variable (k : NumKind)
+@[eval_inv] theorem NumKind.rank_byte : NumKind.rank .byte = 0 := rfl
+@[eval_inv] theorem NumKind.rank_short : NumKind.rank .short = 1 := rfl
+@[eval_inv] theorem NumKind.rank_int : NumKind.rank .int = 2 := rfl
+@[eval_inv] theorem NumKind.rank_long : NumKind.rank .long = 3 := rfl
+@[eval_inv] theorem NumKind.rank_bigint : NumKind.rank .bigint = 4 := rfl
+/-- Every kind upcasts to `BigInt`. -/
+@[eval_inv] theorem NumKind.rank_le_four : k.rank ≤ 4 := by cases k <;> decide
+end
 
 /-! ## Environment-free leaves: `getVar` -/
 
