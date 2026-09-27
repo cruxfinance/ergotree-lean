@@ -236,9 +236,8 @@ partial def decodeContext (j : Json) : Except String Context := do
     let v ← decodeValue (← arrGet arr 1)
     pure (idx, v))
   -- Per-case oracle tables (`"blake2b"`/`"deserialize"`, both
-  -- optional — absent means "empty
-  -- table", i.e. `Oracle.default`). `difftest/src/cl_common.rs` emits
-  -- these as `[[hexInput, hexHash], ...]` / `[[hexInput, Value], ...]`
+  -- optional — absent means "empty table", i.e. `Oracle.default`).
+  -- `difftest/src/lib.rs` writes these as `[[hexInput, hexHash], ...]` / `[[hexInput, Value], ...]`
   -- respectively — the *real* blake2b256 hash of the bytes this case
   -- actually feeds `CalcBlake2b256`, and the already-evaluated `Value`
   -- sigma-rust's `DeserializeContext` would produce for the bytes this
