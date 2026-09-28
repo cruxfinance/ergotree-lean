@@ -40,6 +40,8 @@ difftest-gen:
 		--out ../ErgoTreeLean/DiffTest/box-fields-cases.json
 	cd difftest && ./target/release/difftest --contract timelock --seed 1 --count 150 \
 		--out ../ErgoTreeLean/DiffTest/timelock-cases.json
+	cd difftest && ./target/release/difftest --contract sigma-prop-bytes --seed 1 --count 300 \
+		--out ../ErgoTreeLean/DiffTest/sigma-prop-bytes-cases.json
 
 # Full differential test: regenerate cases, then run the Lean evaluator
 # over all of them via `lake exe difftest` (0 mismatches required).

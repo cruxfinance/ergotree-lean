@@ -118,6 +118,7 @@ def collectValDefIds : Expr → List Nat
   | .sigmaAnd items => collectValDefIdsList items
   | .createProveDlog e => collectValDefIds e
   | .boolToSigmaProp e => collectValDefIds e
+  | .sigmaPropBytes e => collectValDefIds e
   | .binOp _ l r => collectValDefIds l ++ collectValDefIds r
   | .andOf e => collectValDefIds e
   | .orOf e => collectValDefIds e
@@ -205,6 +206,7 @@ def rewriteExpr (m : FuncMap) : Expr → Expr
   | .sigmaAnd items => .sigmaAnd (rewriteExprList m items)
   | .createProveDlog e => .createProveDlog (rewriteExpr m e)
   | .boolToSigmaProp e => .boolToSigmaProp (rewriteExpr m e)
+  | .sigmaPropBytes e => .sigmaPropBytes (rewriteExpr m e)
   | .binOp k l r => .binOp k (rewriteExpr m l) (rewriteExpr m r)
   | .andOf e => .andOf (rewriteExpr m e)
   | .orOf e => .orOf (rewriteExpr m e)

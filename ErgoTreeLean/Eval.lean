@@ -345,6 +345,15 @@ def eval (consts : List Value) (ctx : Context) (env : Env) : Expr → Except Eva
       match v with
       | .vBool b => pure (.vSigmaProp (.trivial b))
       | _ => .error (.error "boolToSigmaProp: not a Bool")
+  -- mirrors: eval/sigma_prop_bytes.rs (`Value::SigmaProp(sp) => sp.prop_bytes()`,
+  -- any other value an error; see `Syntax.lean`'s `SigmaBoolean.propBytes`
+  -- for the exact byte layout and why `prop_bytes()` itself never errors
+  -- for a shape this model can build)
+  | .sigmaPropBytes e => do
+      let v ← eval consts ctx env e
+      match v with
+      | .vSigmaProp sb => pure (bytesToVColl sb.propBytes)
+      | _ => .error (.error "sigmaPropBytes: not a SigmaProp")
   -- mirrors: eval/bin_op.rs (`LogicalOp::And` — lazy: rhs only evaluated if lhs is true)
   | .binOp (.logical .and) l r => do
       let lv ← eval consts ctx env l

@@ -71,7 +71,13 @@ Ergo mainnet":
   *derived* — `Box.register`/`Eval.lean` compute R0 (value), R1
   (propositionBytes), R2 (tokens) and R3 (creationInfo) from those
   fields on every read, exactly like `ergo_box.rs`'s `get_register`; R4-R9
-  stay a plain lookup in `Box.registers`.
+  stay a plain lookup in `Box.registers`. `SigmaBoolean.propBytes`
+  (`SigmaPropBytes`, ErgoScript `somePk.propBytes`) is a total function
+  covering all five `SigmaBoolean` constructors, matching
+  `SigmaProp::prop_bytes()`'s exact byte layout (ErgoTree header,
+  `SSigmaProp` type code, then the `SigmaBoolean`'s own op code and
+  payload — VLQ-encoded child counts for `Cand`/`Cor`/`Cthreshold`) byte
+  for byte.
 - **Numeric semantics** (`ErgoTreeLean/Numeric.lean`): checked, per-width
   arithmetic (`Byte`/`Short`/`Int`/`Long`/`BigInt`, each range-checked
   against its own bound), truncating (not Euclidean) division/modulo,
@@ -361,12 +367,24 @@ a hand-written synthetic tree exercising R0-R3/`ExtractCreationInfo` on
 `sigmaProp(HEIGHT >= SELF.creationInfo._1 + 720) && PK(...)` tree,
 exported to `ErgoTreeLean/Contracts/Timelock/Exported.lean`) — `Main.lean`
 runs both and sums their mismatches into the `box-fields`-labelled total
-alongside `sell-order`'s.
+alongside `sell-order`'s. A fourth family, `sigma-prop-bytes`
+(`ErgoTreeLean/Contracts/SigmaPropBytes.lean`), covers `SigmaPropBytes`: a
+hand-written `sigmaProp(OUTPUTS(0).propositionBytes == CONST.propBytes)`
+tree, with `CONST` a per-case `SigmaProp` constant of every
+`SigmaBoolean` shape (`ProveDlog`, `TrivialProp` true/false, `Cand`/
+`Cor`/`Cthreshold` including nested and larger child counts and `k`
+across its collapsing/non-collapsing range) built with sigma-rust's own
+normalizing constructors, and an `OUTPUTS(0)` box whose real
+`propositionBytes` is either exactly that shape's `prop_bytes()` output
+or a deliberate mismatch (one-byte mutation, truncation, different
+shape/key).
 
 **Result, current seed:** `sell-order`: 300 cases, 0 mismatches;
 `box-fields`: 300 cases, 0 mismatches (150 trivial-true, 100
 trivial-false, 50 evaluation-error); `timelock`: 150 cases, 0 mismatches
-(50 trivial-false, 100 proveDlog).
+(50 trivial-false, 100 proveDlog); `sigma-prop-bytes`: 300 cases, 0
+mismatches (60 trivial-true, 192 trivial-false, 48 evaluation-error;
+every shape meets every outcome kind, the exact match included).
 
 ### Difftest library usage (downstream)
 

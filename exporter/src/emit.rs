@@ -374,6 +374,7 @@ pub fn emit(e: &Expr) -> Result<String> {
         Expr::SigmaAnd(sa) => format!(".sigmaAnd {}", list_of(sa.items.as_slice())?),
         Expr::CreateProveDlog(v) => format!(".createProveDlog {}", paren(&emit(&v.input)?)),
         Expr::BoolToSigmaProp(v) => format!(".boolToSigmaProp {}", paren(&emit(&v.input)?)),
+        Expr::SigmaPropBytes(v) => format!(".sigmaPropBytes {}", paren(&emit(&v.input)?)),
         Expr::BinOp(sp) => {
             let bo = sp.expr();
             let kind = bin_op_kind_to_lean(&bo.kind)?;

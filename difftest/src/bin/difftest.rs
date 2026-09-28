@@ -9,5 +9,6 @@ fn main() -> anyhow::Result<()> {
         ("sell-order", difftest::sell_order::generate),
         ("box-fields", difftest::box_fields::generate),
         ("timelock", difftest::timelock::generate),
+        ("sigma-prop-bytes", difftest::sigma_prop_bytes::generate),
     ])
 }

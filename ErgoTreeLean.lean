@@ -17,6 +17,9 @@ import ErgoTreeLean.Contracts.BoxFields
 -- + 720) && PK(...)`), exported by the Rust exporter — the `box-fields`
 -- family's second, real-world tree (see `Contracts/Timelock/Exported.lean`).
 import ErgoTreeLean.Contracts.Timelock.Exported
+-- `sigma-prop-bytes` differential-test family: a hand-written synthetic
+-- tree exercising `SigmaPropBytes` (see `Contracts/SigmaPropBytes.lean`).
+import ErgoTreeLean.Contracts.SigmaPropBytes
 -- Symbolic-evaluation tactic tooling (pulls in Lemmas/EvalInv.lean,
 -- Lemmas/EvalHolds.lean, Lemmas/SigmaHolds.lean, Lemmas/Beq.lean,
 -- Tactics/Attr.lean transitively). The only modules in this library that

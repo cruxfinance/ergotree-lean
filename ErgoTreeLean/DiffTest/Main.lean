@@ -31,7 +31,12 @@ def runMain : IO UInt32 := do
   let m2 ← runCases "box-fields" ErgoTreeLean.Contracts.boxFieldsTree boxFieldsCases
   let timelockCases ← loadCases "ErgoTreeLean/DiffTest/timelock-cases.json"
   let m3 ← runCases "box-fields (timelock)" ErgoTreeLean.Contracts.Timelock.Exported.timelockTree timelockCases
-  let total := m1 + m2 + m3
+  -- `sigma-prop-bytes`: `SigmaPropBytes` (`somePk.propBytes`) on a
+  -- per-case `SigmaProp` constant of every `SigmaBoolean` shape — see
+  -- `ErgoTreeLean/Contracts/SigmaPropBytes.lean`.
+  let sigmaPropBytesCases ← loadCases "ErgoTreeLean/DiffTest/sigma-prop-bytes-cases.json"
+  let m4 ← runCases "sigma-prop-bytes" ErgoTreeLean.Contracts.sigmaPropBytesTree sigmaPropBytesCases
+  let total := m1 + m2 + m3 + m4
   if total == 0 then
     IO.println "difftest: 0 mismatches"
     pure 0

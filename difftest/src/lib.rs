@@ -30,6 +30,7 @@
 pub mod box_fields;
 pub mod leanval;
 pub mod sell_order;
+pub mod sigma_prop_bytes;
 pub mod timelock;
 
 use anyhow::{Context as _, Result};

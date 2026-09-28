@@ -213,6 +213,106 @@ end
 
 instance : BEq SigmaBoolean := ⟨SigmaBoolean.beq⟩
 
+/-- VLQ-encode a value already known to be a `u16` (top-bit-continuation,
+    low 7 bits per byte, least-significant group first) — mirrors
+    `sigma-ser`'s `WriteSigmaVlqExt::put_u16` (`vlq_encode.rs`:
+    `put_u16(v) = put_u64(v as u64)`, the same base-128 VLQ
+    `Deserialize.lean`'s `readVLQ` decodes, just unsigned and with no
+    zigzag step). `n % 65536` mirrors the `as u16` truncation every
+    call site below performs before encoding (`Cand`/`Cor`'s
+    `items.len() as u16`, `Cthreshold`'s `k as u16`/`children.len() as
+    u16` — `sigmaboolean.rs`), so this is total and needs no fuel: a
+    `u16` value is at most 65535, which needs at most 3 VLQ bytes
+    (⌈16/7⌉ = 3), so the three cases below (1, 2 or 3 bytes) are
+    exhaustive and there is no further recursive case to write. -/
+def vlqEncodeU16 (n : Nat) : List UInt8 :=
+  let n := n % 65536
+  if n < 128 then
+    [UInt8.ofNat n]
+  else
+    let b0 := UInt8.ofNat (n % 128 + 128)
+    let n1 := n / 128
+    if n1 < 128 then
+      [b0, UInt8.ofNat n1]
+    else
+      let b1 := UInt8.ofNat (n1 % 128 + 128)
+      let n2 := n1 / 128
+      -- `n ≤ 65535 ⇒ n1 = n / 128 ≤ 511 ⇒ n2 = n1 / 128 ≤ 3 < 128`, so
+      -- this is always the last byte (no fourth VLQ byte is ever
+      -- needed for a `u16`).
+      [b0, b1, UInt8.ofNat n2]
+
+mutual
+/-- `SigmaBoolean`'s real wire encoding, i.e. everything `sigmaboolean.rs`'s
+    `impl SigmaSerializable for SigmaBoolean` writes for one node: a 1-byte
+    op code (`self.op_code()`) followed by that constructor's payload.
+    Used by `propBytes` below (`SigmaProp::prop_bytes()`,
+    `sigma_boolean.rs:302`, always serializes the *whole* `SigmaBoolean`
+    this way, header and type code aside). Op codes are
+    `LAST_CONSTANT_CODE (112) + shift` (`op_code.rs`'s `new_op_code`):
+    `ProveDlog` shift 93 ↦ 205 = `0xcd`; `Cand`/`And` shift 38 ↦ 150 =
+    `0x96`; `Cor`/`Or` shift 39 ↦ 151 = `0x97`; `Cthreshold`/`Atleast`
+    shift 40 ↦ 152 = `0x98`; `TrivialProp` has no `new_op_code` entry of
+    its own — `TRIVIAL_PROP_FALSE`/`_TRUE` are literal `OpCode::new(210)`/
+    `new(211)` (`0xd2`/`0xd3`) in `op_code.rs`, besides which `TrivialProp`
+    writes no further bytes. `ProveDlog`'s payload is `pk` exactly as
+    stored (an `EcPoint`'s `sigma_serialize` writes its 33-byte SEC1
+    compressed encoding with no length prefix — `ec_point.rs`'s
+    `scorex_serialize`/`GROUP_SIZE`; this model's `GroupElement` is
+    already exactly those 33 bytes, see `Syntax.lean`'s `proveDlog`
+    docstring, so no encoding step is needed here beyond appending it).
+    `Cand`/`Cor`'s payload is `put_u16(items.len())` (a VLQ, *not* 2 raw
+    bytes — see `vlqEncodeU16`) followed by each item serialized in
+    order; `Cthreshold`'s is `put_u16(k)` then `put_u16(children.len())`
+    then each child. -/
+def SigmaBoolean.serialize : SigmaBoolean → List UInt8
+  | .trivial false => [0xd2]
+  | .trivial true => [0xd3]
+  | .proveDlog pk => (0xcd : UInt8) :: pk
+  | .cor items => (0x97 : UInt8) :: vlqEncodeU16 items.length ++ SigmaBoolean.serializeList items
+  | .cand items => (0x96 : UInt8) :: vlqEncodeU16 items.length ++ SigmaBoolean.serializeList items
+  | .cthreshold k items =>
+      (0x98 : UInt8) :: vlqEncodeU16 k ++ vlqEncodeU16 items.length ++ SigmaBoolean.serializeList items
+
+def SigmaBoolean.serializeList : List SigmaBoolean → List UInt8
+  | [] => []
+  | sb :: rest => SigmaBoolean.serialize sb ++ SigmaBoolean.serializeList rest
+end
+
+/-- `somePk.propBytes` (`SigmaPropBytes`'s result, `Eval.lean`): the exact
+    bytes `SigmaProp::prop_bytes()` produces (`sigma_boolean.rs:302`) —
+    the `SigmaBoolean` wrapped as an `ErgoTree`'s sole root expression
+    (`Constant { tpe: SSigmaProp, .. }`) and serialized whole. Traced
+    through `ErgoTree::try_from(Expr)` (`ergo_tree.rs`): a bare
+    `Expr::Const` of type `SSigmaProp` gets header `ErgoTreeHeader::v0(false)`
+    — version 0, *no* constant segregation, *no* size flag, i.e. a single
+    header byte `0x00` — so `ErgoTree::sigma_serialize` writes just that
+    byte (no constants segment, `has_size` false) followed by the root
+    `Expr::Const`'s own serialization with no constant store installed
+    (`expr.rs`'s `Expr::Const` case, `None` branch: writes the `Constant`
+    directly, not a placeholder). A `Constant`'s serialization
+    (`constant.rs`) is its `SType` (a single type-code byte —
+    `SSigmaProp`'s is `8 = 0x08`, `types.rs`) followed by
+    `DataSerializer::sigma_serialize`, which for `Literal::SigmaProp(sp)`
+    is exactly `sp.value().sigma_serialize(w)` (`data.rs`) — i.e.
+    `SigmaBoolean.serialize` above, with no extra framing. Net layout:
+    `0x00 ++ 0x08 ++ <SigmaBoolean.serialize sb>` — e.g. `proveDlog pk`
+    is `[0x00, 0x08, 0xcd] ++ pk`.
+
+    **Never errors for any shape this model can build.** `prop_bytes()`
+    returns `Result<Vec<u8>, ErgoTreeError>`, but every step on this path
+    is infallible for a bare `Const(SSigmaProp)` root: `ErgoTree::new`
+    with `is_constant_segregation = false` just wraps the expression
+    (`ergo_tree.rs`'s `else` branch — no serialize/parse round-trip, so
+    no parse error is possible), and every `sigma_serialize` call from
+    there down writes to an in-memory `Vec<u8>` (`io::Write` on a `Vec`
+    never fails) with no VLQ/count encoding step that can itself fail —
+    `put_u16` casts its `usize`/`u8` argument to `u16` with Rust's `as`
+    (silent truncation, never a panic), which `vlqEncodeU16`'s `n % 65536`
+    mirrors exactly. So this function is total and needs no `Except`. -/
+def SigmaBoolean.propBytes (sb : SigmaBoolean) : List UInt8 :=
+  (0x00 : UInt8) :: (0x08 : UInt8) :: sb.serialize
+
 /-- Mirrors `ergotree_ir::mir::bin_op::ArithOp`. -/
 inductive ArithOp where
   | plus | minus | multiply | divide | modulo | max | min
@@ -382,6 +482,12 @@ inductive Expr where
   | createProveDlog (e : Expr)
   /-- `BoolToSigmaProp`: lift a boolean into a (trivial) sigma-proposition. -/
   | boolToSigmaProp (e : Expr)
+  /-- `SigmaPropBytes`: `somePk.propBytes` — the serialized bytes of a
+      `SigmaProp` value. Mirrors `mir/sigma_prop_bytes.rs`; see
+      `SigmaBoolean.propBytes` for the exact byte layout, which
+      `Eval.lean`'s case for this node reads straight off the evaluated
+      `SigmaProp`'s `SigmaBoolean`. -/
+  | sigmaPropBytes (e : Expr)
   /-- `BinOp`: arithmetic/relational/logical/bitwise binary operation. -/
   | binOp (kind : BinOpKind) (l r : Expr)
   /-- `And`: `allOf` — n-ary AND over a `Coll[Boolean]`. -/

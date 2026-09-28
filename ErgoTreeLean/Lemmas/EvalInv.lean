@@ -208,6 +208,11 @@ local macro "inv_unary" e:term : tactic => `(tactic| (
       ∃ g, eval c x env e = .ok (.vGroupElement g) ∧ w = .vSigmaProp (.proveDlog g) := by
   inv_unary e
 
+@[eval_inv] theorem eval_sigmaPropBytes_ok (e : Expr) (w : Value) :
+    eval c x env (.sigmaPropBytes e) = .ok w ↔
+      ∃ sb, eval c x env e = .ok (.vSigmaProp sb) ∧ w = bytesToVColl sb.propBytes := by
+  inv_unary e
+
 @[eval_inv] theorem eval_logicalNot_ok (e : Expr) (w : Value) :
     eval c x env (.logicalNot e) = .ok w ↔ ∃ b, eval c x env e = .ok (.vBool b) ∧ w = .vBool (!b) := by
   inv_unary e

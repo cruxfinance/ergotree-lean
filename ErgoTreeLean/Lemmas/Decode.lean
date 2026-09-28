@@ -422,4 +422,19 @@ theorem tdiv_eq_tdiv (a b : Int) : tdiv a b = a.tdiv b := by
     upcastValue k p .bigint = some z ↔ p = z := by
   cases k <;> simp [upcastValue, NumKind.rank]
 
+/-! ## `SigmaBoolean.propBytes`
+
+A `proveDlog`'s `propBytes` reduces to a literal byte list by `rfl` (no
+runtime `Except`/`Option` to case on, unlike the `eval_inv` rules above —
+see `Syntax.lean`'s `SigmaBoolean.propBytes` docstring for the byte
+layout this pins: ErgoTree header `0x00`, `SSigmaProp` type code `0x08`,
+`ProveDlog`'s op code `0xcd`, then the raw 33-byte public key). Tagged
+`eval_inv` so `eval_sym` rewrites a `sigmaPropBytes` result all the way
+to concrete bytes whenever the underlying `SigmaProp` is known to be a
+bare `proveDlog` (e.g. from `createProveDlog`/a `proveDlog`-typed
+constant), the same way the arithmetic/decode facts above do. -/
+@[eval_inv] theorem SigmaBoolean.propBytes_proveDlog (pk : List UInt8) :
+    SigmaBoolean.propBytes (.proveDlog pk) = [0x00, 0x08, 0xcd] ++ pk := by
+  rfl
+
 end ErgoTreeLean
