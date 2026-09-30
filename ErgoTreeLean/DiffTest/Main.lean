@@ -36,7 +36,12 @@ def runMain : IO UInt32 := do
   -- `ErgoTreeLean/Contracts/SigmaPropBytes.lean`.
   let sigmaPropBytesCases ← loadCases "ErgoTreeLean/DiffTest/sigma-prop-bytes-cases.json"
   let m4 ← runCases "sigma-prop-bytes" ErgoTreeLean.Contracts.sigmaPropBytesTree sigmaPropBytesCases
-  let total := m1 + m2 + m3 + m4
+  -- `coll-indexof`: `SCollection.indexOf` (`type_id=12`, `method_id=26`) on
+  -- `INPUTS`/`SELF`, the `MethodCall` node this family added a case for —
+  -- see `ErgoTreeLean/Contracts/CollIndexOf.lean`.
+  let collIndexOfCases ← loadCases "ErgoTreeLean/DiffTest/coll-indexof-cases.json"
+  let m5 ← runCases "coll-indexof" ErgoTreeLean.Contracts.collIndexOfTree collIndexOfCases
+  let total := m1 + m2 + m3 + m4 + m5
   if total == 0 then
     IO.println "difftest: 0 mismatches"
     pure 0

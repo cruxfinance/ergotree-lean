@@ -201,6 +201,35 @@ def Box.register (b : Box) (idx : Int) : Option Value :=
   else if idx == 3 then some b.creationInfoValue
   else (b.registers.find? (fun p => (p.1 : Int) == idx)).map Prod.snd
 
+/-- `Coll.indexOf(elem, from)`'s per-element search, walking `vs` left to
+    right while threading `i`, the *absolute* index of `vs`'s head in the
+    original (undropped) collection — see `Value.indexOf` below, which
+    seeds `i` at the already-clamped `from` and passes it `vs.drop from`.
+    First element equal to `elem` under `Value.beq` wins; `[]` (search ran
+    off the end) → `-1`. -- mirrors: `eval/scoll.rs`'s `INDEX_OF_EVAL_FN`,
+    the `.position(|it| it == target_element)` step. -/
+def indexOfGo (elem : Value) : Int → List Value → Int
+  | _, [] => -1
+  | i, v :: vs => if Value.beq v elem then i else indexOfGo elem (i + 1) vs
+
+/-- `SCollection.indexOf` (`type_id=12`, `method_id=26`): the index of the
+    first element of `vs` equal to `elem` (`Value.beq` — the same total
+    structural equality `BinOp`'s `Eq`/`NEq` use; for a `Coll[Box]` this is
+    `Box.beq`'s full eight-field structural comparison, matching `ErgoBox`'s
+    derived `PartialEq` in sigma-rust — no divergence found), searching only
+    from index `from` onward; `-1` if none matches (including when `from` is
+    at or past `vs.length`). -- mirrors: `ergotree-interpreter-0.28.0`'s
+    `eval/scoll.rs`, `INDEX_OF_EVAL_FN` exactly:
+    `args.get(1)…try_extract_into::<i32>()?.max(0)` clamps a *negative*
+    `from` to `0` (never "from the end", and never an error) before
+    `.skip(from as usize).position(|it| it == target_element).map(|idx| idx
+    as i32 + from).unwrap_or(-1)` — `from` past the collection's length just
+    makes `.skip` produce an empty iterator, so that case is `-1` too, not
+    an error. No known Scala-node divergence for this method. -/
+def Value.indexOf (vs : List Value) (elem : Value) (fromArg : Int) : Int :=
+  let from' := max fromArg 0
+  indexOfGo elem from' (vs.drop from'.toNat)
+
 /-- Bind a `FuncValue`'s parameter list to a list of already-evaluated
     argument values, in order; `none` on an arity mismatch. -/
 def bindArgs (env : Env) : List (Nat × SType) → List Value → Option Env
@@ -672,6 +701,18 @@ def eval (consts : List Value) (ctx : Context) (env : Env) : Expr → Except Eva
       | _ => .error (.error "propertyCall Box.tokens: not a Box")
   | .propertyCall _ typeId methodId =>
       .error (.error s!"propertyCall: unsupported method {typeId}.{methodId}")
+  -- mirrors: eval/method_call.rs (obj, then args left to right, eagerly)
+  -- + eval/scoll.rs's `INDEX_OF_EVAL_FN` (`SCollection.indexOf`,
+  -- `type_id=12`, `method_id=26`) — see `Value.indexOf`'s docstring for the
+  -- exact semantics (`from` clamped to ≥ 0, `-1` when not found).
+  | .methodCall obj 12 26 [elemE, fromE] => do
+      let v ← eval consts ctx env obj
+      let ev ← eval consts ctx env elemE
+      let fv ← eval consts ctx env fromE
+      match v, fv with
+      | .vColl _ vs, .vInt f => pure (.vInt (Value.indexOf vs ev f))
+      | .vColl _ _, _ => .error (.error "methodCall indexOf: from is not an Int")
+      | _, _ => .error (.error "methodCall indexOf: not a collection")
   | .methodCall _ typeId methodId _ =>
       .error (.error s!"methodCall: unsupported method {typeId}.{methodId}")
   -- mirrors: eval/upcast.rs (only ever widens; same-kind is a no-op)

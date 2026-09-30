@@ -20,6 +20,9 @@ import ErgoTreeLean.Contracts.Timelock.Exported
 -- `sigma-prop-bytes` differential-test family: a hand-written synthetic
 -- tree exercising `SigmaPropBytes` (see `Contracts/SigmaPropBytes.lean`).
 import ErgoTreeLean.Contracts.SigmaPropBytes
+-- `coll-indexof` differential-test family: a hand-written synthetic tree
+-- exercising `SCollection.indexOf` (see `Contracts/CollIndexOf.lean`).
+import ErgoTreeLean.Contracts.CollIndexOf
 -- Symbolic-evaluation tactic tooling (pulls in Lemmas/EvalInv.lean,
 -- Lemmas/EvalHolds.lean, Lemmas/SigmaHolds.lean, Lemmas/Beq.lean,
 -- Tactics/Attr.lean transitively). The only modules in this library that

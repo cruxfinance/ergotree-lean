@@ -28,6 +28,7 @@
 //! own binary against this same library.
 
 pub mod box_fields;
+pub mod coll_indexof;
 pub mod leanval;
 pub mod sell_order;
 pub mod sigma_prop_bytes;

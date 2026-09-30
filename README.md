@@ -105,6 +105,12 @@ Ergo mainnet":
   closures (`Apply`/`Filter`/`Exists`/`ForAll`/`Fold`'s function operand
   is matched syntactically against a literal `funcValue`, never evaluated
   to a `Value` first — see `inlineFuns` below for what makes this work).
+  `PropertyCall`/`MethodCall` are dispatched by their numeric
+  `(type_id, method_id)` pair, one `eval` case per method covered so far:
+  `SCollection.indices` (12.14), `SCollection.indexOf` (12.26 — found via
+  `Value.beq`, matching `ErgoBox`'s derived `PartialEq` for a `Coll[Box]`;
+  no known Scala-node divergence) and `Box.tokens` (99.8); anything else is
+  a hard `eval` error, not an approximation.
 - **`inlineFuns`** (`ErgoTreeLean/InlineFuns.lean`): a syntactic pre-pass
   that substitutes every `ValDef`-bound `FuncValue` at its `ValUse` sites
   and drops the `ValDef`, so that by the time `eval` runs, every `Apply`'s
@@ -377,14 +383,28 @@ across its collapsing/non-collapsing range) built with sigma-rust's own
 normalizing constructors, and an `OUTPUTS(0)` box whose real
 `propositionBytes` is either exactly that shape's `prop_bytes()` output
 or a deliberate mismatch (one-byte mutation, truncation, different
-shape/key).
+shape/key). A fifth family, `coll-indexof`
+(`ErgoTreeLean/Contracts/CollIndexOf.lean`), covers `SCollection.indexOf`
+(`type_id=12`, `method_id=26` — the `MethodCall` node this family's own
+work added an `eval` case for; motivated by `dexy-stable`'s
+`contracts/bank/update/ballot.es`, `INPUTS.indexOf(SELF, 0)`): a
+hand-written `sigmaProp(INPUTS.indexOf(SELF, fromConst) == targetConst)`
+tree, with `fromConst`/`targetConst` per-case template constants and
+`INPUTS` varied to cover every case `Value.indexOf`'s docstring
+(`Eval.lean`) lists — found at index 0 (`ballot.es`'s own shape), found
+later, not found (`SELF` absent), duplicates (first match at-or-after
+`from`), `from` negative and `from` at/past `INPUTS.size` — `targetConst`
+is the real correct index most of the time and deliberately wrong on a
+fifth of cases, for outcome-distribution diversity.
 
 **Result, current seed:** `sell-order`: 300 cases, 0 mismatches;
 `box-fields`: 300 cases, 0 mismatches (150 trivial-true, 100
 trivial-false, 50 evaluation-error); `timelock`: 150 cases, 0 mismatches
 (50 trivial-false, 100 proveDlog); `sigma-prop-bytes`: 300 cases, 0
 mismatches (60 trivial-true, 192 trivial-false, 48 evaluation-error;
-every shape meets every outcome kind, the exact match included).
+every shape meets every outcome kind, the exact match included);
+`coll-indexof`: 270 cases, 0 mismatches (216 trivial-true, 54
+trivial-false, 0 evaluation-error — `indexOf` itself never errors).
 
 ### Difftest library usage (downstream)
 

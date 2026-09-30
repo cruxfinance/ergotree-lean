@@ -10,5 +10,6 @@ fn main() -> anyhow::Result<()> {
         ("box-fields", difftest::box_fields::generate),
         ("timelock", difftest::timelock::generate),
         ("sigma-prop-bytes", difftest::sigma_prop_bytes::generate),
+        ("coll-indexof", difftest::coll_indexof::generate),
     ])
 }
