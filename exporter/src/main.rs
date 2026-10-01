@@ -340,6 +340,11 @@ fn dummy_literal(tpe: &SType) -> Result<Literal> {
             }),
         },
         SType::SOption(_) => Literal::Opt(Box::new(None)),
+        SType::SSigmaProp => Literal::SigmaProp(Box::new(
+            ergotree_ir::sigma_protocol::sigma_boolean::SigmaProp::new(
+                ergotree_ir::sigma_protocol::sigma_boolean::SigmaBoolean::TrivialProp(false),
+            ),
+        )),
         other => bail!("dummy_literal: unsupported EIP-5 constant type {other:?}"),
     })
 }
